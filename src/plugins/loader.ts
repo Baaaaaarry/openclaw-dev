@@ -87,12 +87,18 @@ const resolvePluginSdkAliasFile = (params: {
 const resolvePluginSdkAlias = (): string | null =>
   resolvePluginSdkAliasFile({ srcFile: "index.ts", distFile: "index.js" });
 
+const resolvePluginSdkAliasDir = (): string | null => {
+  const aliasFile = resolvePluginSdkAlias();
+  return aliasFile ? path.dirname(aliasFile) : null;
+};
+
 const resolvePluginSdkAccountIdAlias = (): string | null => {
   return resolvePluginSdkAliasFile({ srcFile: "account-id.ts", distFile: "account-id.js" });
 };
 
 export const __testing = {
   resolvePluginSdkAliasFile,
+  resolvePluginSdkAliasDir,
 };
 
 function buildCacheKey(params: {
@@ -428,7 +434,9 @@ export function loadOpenClawPlugins(options: PluginLoadOptions = {}): PluginRegi
     if (jitiLoader) {
       return jitiLoader;
     }
-    const pluginSdkAlias = resolvePluginSdkAlias();
+    // Jiti aliases are prefix-based. Point the package root at the directory so
+    // subpath imports do not get rewritten to ".../index.js/<subpath>".
+    const pluginSdkAlias = resolvePluginSdkAliasDir();
     const pluginSdkAccountIdAlias = resolvePluginSdkAccountIdAlias();
     jitiLoader = createJiti(import.meta.url, {
       interopDefault: true,

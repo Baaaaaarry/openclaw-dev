@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { createJiti } from "jiti";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { withEnv } from "../test-utils/env.js";
 import { __testing, loadOpenClawPlugins } from "./loader.js";
@@ -761,5 +763,49 @@ describe("loadOpenClawPlugins", () => {
       }),
     );
     expect(resolved).toBe(srcFile);
+  });
+
+  it("resolves plugin-sdk package alias to the directory", () => {
+    const root = makeTempDir();
+    const srcFile = path.join(root, "src", "plugin-sdk", "index.ts");
+    fs.mkdirSync(path.dirname(srcFile), { recursive: true });
+    fs.writeFileSync(srcFile, "export {};\n", "utf-8");
+
+    const resolved = withEnv({ NODE_ENV: undefined }, () =>
+      path.dirname(
+        __testing.resolvePluginSdkAliasFile({
+          srcFile: "index.ts",
+          distFile: "index.js",
+          modulePath: path.join(root, "src", "plugins", "loader.ts"),
+        }) ?? "",
+      ),
+    );
+
+    expect(resolved).toBe(path.dirname(srcFile));
+  });
+
+  it("keeps plugin-sdk subpath imports out of index.js prefix rewrites", () => {
+    const root = makeTempDir();
+    const pluginSdkDir = path.join(root, "plugin-sdk");
+    const pluginSdkIndex = path.join(pluginSdkDir, "index.js");
+    const pluginSdkAccountId = path.join(pluginSdkDir, "account-id.js");
+    const entryUrl = pathToFileURL(path.join(root, "entry.mjs")).href;
+    fs.mkdirSync(pluginSdkDir, { recursive: true });
+    fs.writeFileSync(pluginSdkIndex, "export {};\n", "utf-8");
+    fs.writeFileSync(pluginSdkAccountId, "export {};\n", "utf-8");
+
+    const jiti = createJiti(entryUrl, {
+      alias: {
+        "openclaw/plugin-sdk": pluginSdkDir,
+        "openclaw/plugin-sdk/account-id": pluginSdkAccountId,
+      },
+      interopDefault: true,
+    });
+
+    expect(jiti.esmResolve("openclaw/plugin-sdk")).toContain("/plugin-sdk/index.js");
+    expect(jiti.esmResolve("openclaw/plugin-sdk/account-id")).toContain(
+      "/plugin-sdk/account-id.js",
+    );
+    expect(() => jiti.esmResolve("openclaw/plugin-sdk/feishu")).toThrowError(/plugin-sdk\/feishu/);
   });
 });
