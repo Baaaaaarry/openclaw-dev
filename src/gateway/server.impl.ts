@@ -31,6 +31,7 @@ import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
+import { startLatencyTracePersist } from "../infra/latency-trace-persist.js";
 import { getMachineDisplayName } from "../infra/machine-name.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { setGatewaySigusr1RestartPolicy, setPreRestartDeferralCheck } from "../infra/restart.js";
@@ -372,6 +373,7 @@ export async function startGatewayServer(
   const diagnosticsEnabled = isDiagnosticsEnabled(cfgAtStart);
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
+    startLatencyTracePersist(cfgAtStart);
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(

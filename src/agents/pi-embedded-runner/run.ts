@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
 import { generateSecureToken } from "../../infra/secure-random.js";
+import { logLatencySegment } from "../../logging/diagnostic.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
 import { enqueueCommandInLane } from "../../process/command-queue.js";
@@ -211,6 +212,38 @@ export async function runEmbeddedPiAgent(
   return enqueueSession(() =>
     enqueueGlobal(async () => {
       const started = Date.now();
+      const trace = params.latencyTrace;
+      if (
+        trace?.gatewayQueuedAtMs &&
+        Number.isFinite(trace.gatewayQueuedAtMs) &&
+        started >= trace.gatewayQueuedAtMs
+      ) {
+        logLatencySegment({
+          segment: "t3_worker_queue_wait",
+          durationMs: started - trace.gatewayQueuedAtMs,
+          startedAtMs: trace.gatewayQueuedAtMs,
+          endedAtMs: started,
+          channel: trace.channel ?? params.messageChannel ?? params.messageProvider,
+          accountId: trace.accountId ?? params.agentAccountId,
+          chatId: trace.chatId ?? params.messageTo,
+          messageId: trace.messageId ?? params.currentMessageId,
+          sessionKey: trace.sessionKey ?? params.sessionKey,
+          sessionId: trace.sessionId ?? params.sessionId,
+          runId: trace.runId ?? params.runId,
+          provider: trace.provider ?? params.provider,
+          model: trace.model ?? params.model,
+          lane: `${sessionLane}->${globalLane}`,
+          waitMs: started - trace.gatewayQueuedAtMs,
+        });
+      }
+      if (trace) {
+        trace.workerStartedAtMs = started;
+        trace.sessionKey ??= params.sessionKey;
+        trace.sessionId ??= params.sessionId;
+        trace.runId ??= params.runId;
+        trace.provider ??= params.provider;
+        trace.model ??= params.model;
+      }
       const workspaceResolution = resolveRunWorkspaceDir({
         workspaceDir: params.workspaceDir,
         sessionKey: params.sessionKey,

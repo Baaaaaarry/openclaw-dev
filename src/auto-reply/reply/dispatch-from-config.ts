@@ -5,6 +5,7 @@ import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
+  logLatencySegment,
   logMessageProcessed,
   logMessageQueued,
   logSessionStateChange,
@@ -132,6 +133,34 @@ export async function dispatchReplyFromConfig(params: {
   const markProcessing = () => {
     if (!canTrackSession || !sessionKey) {
       return;
+    }
+    const now = Date.now();
+    const trace = ctx.LatencyTrace;
+    if (
+      trace?.feishuEventReceivedAtMs &&
+      Number.isFinite(trace.feishuEventReceivedAtMs) &&
+      now >= trace.feishuEventReceivedAtMs
+    ) {
+      logLatencySegment({
+        segment: "t2_gateway_enqueue",
+        durationMs: now - trace.feishuEventReceivedAtMs,
+        startedAtMs: trace.feishuEventReceivedAtMs,
+        endedAtMs: now,
+        channel,
+        accountId: ctx.AccountId,
+        chatId,
+        messageId,
+        sessionKey,
+        source: trace.source,
+      });
+    }
+    if (trace) {
+      trace.gatewayQueuedAtMs = now;
+      trace.channel = channel;
+      trace.accountId ??= ctx.AccountId;
+      trace.chatId ??= chatId;
+      trace.messageId ??= messageId;
+      trace.sessionKey ??= sessionKey;
     }
     logMessageQueued({ sessionKey, channel, source: "dispatch" });
     logSessionStateChange({

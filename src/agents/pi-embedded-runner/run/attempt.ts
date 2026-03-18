@@ -11,6 +11,7 @@ import { resolveHeartbeatPrompt } from "../../../auto-reply/heartbeat.js";
 import { resolveChannelCapabilities } from "../../../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../../../config/config.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
+import { logLatencySegment } from "../../../logging/diagnostic.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import type {
@@ -427,6 +428,7 @@ function summarizeSessionContext(messages: AgentMessage[]): {
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
+  const attemptStartedAt = Date.now();
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
   const prevCwd = process.cwd();
   const runAbortController = new AbortController();
@@ -865,7 +867,17 @@ export async function runEmbeddedAttempt(
         const providerBaseUrl =
           typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl.trim() : "";
         const ollamaBaseUrl = modelBaseUrl || providerBaseUrl || OLLAMA_NATIVE_BASE_URL;
-        activeSession.agent.streamFn = createOllamaStreamFn(ollamaBaseUrl);
+        activeSession.agent.streamFn = createOllamaStreamFn(ollamaBaseUrl, {
+          channel: params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
+          accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
+          chatId: params.latencyTrace?.chatId ?? params.messageTo,
+          messageId: params.latencyTrace?.messageId ?? params.currentMessageId,
+          sessionKey: params.latencyTrace?.sessionKey ?? params.sessionKey,
+          sessionId: params.latencyTrace?.sessionId ?? params.sessionId,
+          runId: params.latencyTrace?.runId ?? params.runId,
+          provider: params.provider,
+          model: params.modelId,
+        });
       } else {
         // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
         activeSession.agent.streamFn = streamSimple;
@@ -1315,6 +1327,29 @@ export async function runEmbeddedAttempt(
 
           // Only pass images option if there are actually images to pass
           // This avoids potential issues with models that don't expect the images parameter
+          const promptDispatchAt = Date.now();
+          const preprocessStartedAt =
+            params.latencyTrace?.workerStartedAtMs && params.latencyTrace.workerStartedAtMs > 0
+              ? params.latencyTrace.workerStartedAtMs
+              : attemptStartedAt;
+          if (promptDispatchAt >= preprocessStartedAt) {
+            logLatencySegment({
+              segment: "t4_agent_preprocess",
+              durationMs: promptDispatchAt - preprocessStartedAt,
+              startedAtMs: preprocessStartedAt,
+              endedAtMs: promptDispatchAt,
+              channel:
+                params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
+              accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
+              chatId: params.latencyTrace?.chatId ?? params.messageTo,
+              messageId: params.latencyTrace?.messageId ?? params.currentMessageId,
+              sessionKey: params.latencyTrace?.sessionKey ?? params.sessionKey,
+              sessionId: params.latencyTrace?.sessionId ?? params.sessionId,
+              runId: params.latencyTrace?.runId ?? params.runId,
+              provider: params.provider,
+              model: params.modelId,
+            });
+          }
           if (imageResult.images.length > 0) {
             await abortable(activeSession.prompt(effectivePrompt, { images: imageResult.images }));
           } else {

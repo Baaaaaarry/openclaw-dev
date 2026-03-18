@@ -11,6 +11,17 @@ const createReplyDispatcherWithTypingMock = vi.hoisted(() => vi.fn());
 const addTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => ({ messageId: "om_msg" })));
 const removeTypingIndicatorMock = vi.hoisted(() => vi.fn(async () => {}));
 const streamingInstances = vi.hoisted(() => [] as any[]);
+const pluginSdkMocks = vi.hoisted(() => ({
+  logLatencySegment: vi.fn(),
+}));
+
+vi.mock("openclaw/plugin-sdk", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk")>();
+  return {
+    ...actual,
+    logLatencySegment: pluginSdkMocks.logLatencySegment,
+  };
+});
 
 vi.mock("./accounts.js", () => ({ resolveFeishuAccount: resolveFeishuAccountMock }));
 vi.mock("./runtime.js", () => ({ getFeishuRuntime: getFeishuRuntimeMock }));
@@ -50,6 +61,7 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     vi.clearAllMocks();
     streamingInstances.length = 0;
     sendMediaFeishuMock.mockResolvedValue(undefined);
+    pluginSdkMocks.logLatencySegment.mockClear();
 
     resolveFeishuAccountMock.mockReturnValue({
       accountId: "main",
@@ -154,6 +166,13 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
     expect(streamingInstances[0].close).toHaveBeenCalledTimes(1);
     expect(sendMessageFeishuMock).not.toHaveBeenCalled();
     expect(sendMarkdownCardFeishuMock).not.toHaveBeenCalled();
+    expect(pluginSdkMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t6_feishu_return",
+        stage: "final_ack",
+        transport: "streaming-card",
+      }),
+    );
   });
 
   it("sends media-only payloads as attachments", async () => {
@@ -243,6 +262,20 @@ describe("createFeishuReplyDispatcher streaming behavior", () => {
       expect.objectContaining({
         replyToMessageId: "om_msg",
         replyInThread: true,
+      }),
+    );
+    expect(pluginSdkMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t6_feishu_return",
+        stage: "first_ack",
+        transport: "post",
+      }),
+    );
+    expect(pluginSdkMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t6_feishu_return",
+        stage: "final_ack",
+        transport: "post",
       }),
     );
   });

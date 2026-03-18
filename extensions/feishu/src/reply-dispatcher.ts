@@ -3,8 +3,10 @@ import {
   createTypingCallbacks,
   logTypingFailure,
   type ClawdbotConfig,
+  logLatencySegment,
   type ReplyPayload,
   type RuntimeEnv,
+  type LatencyTraceContext,
 } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount } from "./accounts.js";
 import { createFeishuClient } from "./client.js";
@@ -34,6 +36,7 @@ export type CreateFeishuReplyDispatcherParams = {
   rootId?: string;
   mentionTargets?: MentionTarget[];
   accountId?: string;
+  latencyTrace?: LatencyTraceContext;
 };
 
 export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherParams) {
@@ -52,6 +55,49 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
   const sendReplyToMessageId = skipReplyToInMessages ? undefined : replyToMessageId;
   const account = resolveFeishuAccount({ cfg, accountId });
   const prefixContext = createReplyPrefixContext({ cfg, agentId });
+  const latencyTrace: LatencyTraceContext | undefined = params.latencyTrace
+    ? {
+        ...params.latencyTrace,
+        channel: "feishu",
+        accountId: account.accountId,
+        chatId,
+        messageId: params.latencyTrace.messageId ?? replyToMessageId,
+      }
+    : undefined;
+  let firstModelReadyAtMs: number | undefined;
+  let finalModelReadyAtMs: number | undefined;
+  let firstAckLogged = false;
+
+  const emitReturnLatency = (
+    stage: string,
+    startedAtMs: number | undefined,
+    transport: "streaming-card" | "post" | "card",
+  ) => {
+    if (!startedAtMs) {
+      return;
+    }
+    const endedAtMs = Date.now();
+    if (endedAtMs < startedAtMs) {
+      return;
+    }
+    logLatencySegment({
+      segment: "t6_feishu_return",
+      stage,
+      durationMs: endedAtMs - startedAtMs,
+      startedAtMs,
+      endedAtMs,
+      channel: latencyTrace?.channel ?? "feishu",
+      accountId: latencyTrace?.accountId ?? account.accountId,
+      chatId: latencyTrace?.chatId ?? chatId,
+      messageId: latencyTrace?.messageId ?? replyToMessageId,
+      sessionKey: latencyTrace?.sessionKey,
+      sessionId: latencyTrace?.sessionId,
+      runId: latencyTrace?.runId,
+      provider: latencyTrace?.provider,
+      model: latencyTrace?.model,
+      transport,
+    });
+  };
 
   let typingState: TypingIndicatorState | null = null;
   const typingCallbacks = createTypingCallbacks({
@@ -147,6 +193,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         text = buildMentionedCardContent(mentionTargets, text);
       }
       await streaming.close(text);
+      if (!firstAckLogged) {
+        firstAckLogged = true;
+        emitReturnLatency(
+          "first_ack",
+          firstModelReadyAtMs ?? finalModelReadyAtMs,
+          "streaming-card",
+        );
+      }
+      emitReturnLatency("final_ack", finalModelReadyAtMs, "streaming-card");
     }
     streaming = null;
     streamingStartPromise = null;
@@ -181,6 +236,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
         }
 
         if (hasText) {
+          if (!firstModelReadyAtMs) {
+            firstModelReadyAtMs = Date.now();
+          }
+          if (info?.kind === "final") {
+            finalModelReadyAtMs = Date.now();
+            if (latencyTrace) {
+              latencyTrace.finalReplyReadyAtMs = finalModelReadyAtMs;
+            }
+          }
           const useCard = renderMode === "card" || (renderMode === "auto" && shouldUseCard(text));
 
           if ((info?.kind === "block" || info?.kind === "final") && streamingEnabled && useCard) {
@@ -227,6 +291,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 mentions: first ? mentionTargets : undefined,
                 accountId,
               });
+              if (!firstAckLogged) {
+                firstAckLogged = true;
+                emitReturnLatency("first_ack", firstModelReadyAtMs, "card");
+              }
               first = false;
             }
           } else {
@@ -245,8 +313,15 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
                 mentions: first ? mentionTargets : undefined,
                 accountId,
               });
+              if (!firstAckLogged) {
+                firstAckLogged = true;
+                emitReturnLatency("first_ack", firstModelReadyAtMs, "post");
+              }
               first = false;
             }
+          }
+          if (info?.kind === "final") {
+            emitReturnLatency("final_ack", finalModelReadyAtMs, useCard ? "card" : "post");
           }
         }
 
@@ -283,9 +358,30 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
     dispatcher,
     replyOptions: {
       ...replyOptions,
-      onModelSelected: prefixContext.onModelSelected,
+      onAgentRunStart: (runId: string) => {
+        if (latencyTrace) {
+          latencyTrace.runId = runId;
+        }
+      },
+      onModelSelected: (ctx: {
+        provider: string;
+        model: string;
+        thinkLevel: string | undefined;
+      }) => {
+        prefixContext.onModelSelected?.(ctx);
+        if (latencyTrace) {
+          latencyTrace.provider = ctx.provider;
+          latencyTrace.model = ctx.model;
+        }
+      },
       onPartialReply: streamingEnabled
         ? (payload: ReplyPayload) => {
+            if (!firstModelReadyAtMs && payload.text && payload.text !== lastPartial) {
+              firstModelReadyAtMs = Date.now();
+              if (latencyTrace) {
+                latencyTrace.firstModelTokenAtMs = firstModelReadyAtMs;
+              }
+            }
             if (!payload.text || payload.text === lastPartial) {
               return;
             }
@@ -297,6 +393,10 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
               }
               if (streaming?.isActive()) {
                 await streaming.update(streamText);
+                if (!firstAckLogged) {
+                  firstAckLogged = true;
+                  emitReturnLatency("first_ack", firstModelReadyAtMs, "streaming-card");
+                }
               }
             });
           }

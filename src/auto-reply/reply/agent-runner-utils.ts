@@ -185,6 +185,16 @@ export function buildEmbeddedRunBaseParams(params: {
     bashElevated: params.run.bashElevated,
     timeoutMs: params.run.timeoutMs,
     runId: params.runId,
+    latencyTrace: params.run.latencyTrace
+      ? {
+          ...params.run.latencyTrace,
+          sessionKey: params.run.sessionKey,
+          sessionId: params.run.sessionId,
+          runId: params.runId,
+          provider: params.provider,
+          model: params.model,
+        }
+      : undefined,
   };
 }
 

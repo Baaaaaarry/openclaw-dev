@@ -1,4 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+
+const diagnosticMocks = vi.hoisted(() => ({
+  logLatencySegment: vi.fn(),
+}));
+
+vi.mock("../logging/diagnostic.js", () => ({
+  logLatencySegment: diagnosticMocks.logLatencySegment,
+}));
+
 import {
   createOllamaStreamFn,
   convertToOllamaMessages,
@@ -328,6 +337,56 @@ async function collectStreamEvents<T>(stream: AsyncIterable<T>): Promise<T[]> {
 }
 
 describe("createOllamaStreamFn", () => {
+  it("records ttft and native ollama timings", async () => {
+    diagnosticMocks.logLatencySegment.mockClear();
+    await withMockNdjsonFetch(
+      [
+        '{"model":"m","created_at":"t","message":{"role":"assistant","content":"ok"},"done":false}',
+        '{"model":"m","created_at":"t","message":{"role":"assistant","content":""},"done":true,"total_duration":90000000,"load_duration":10000000,"prompt_eval_duration":30000000,"prompt_eval_count":12,"eval_duration":40000000,"eval_count":6}',
+      ],
+      async () => {
+        const streamFn = createOllamaStreamFn("http://ollama-host:11434", {
+          channel: "feishu",
+          sessionKey: "session-1",
+          runId: "run-1",
+        });
+        const stream = streamFn(
+          {
+            id: "qwen3:32b",
+            api: "ollama",
+            provider: "ollama",
+            contextWindow: 8192,
+          } as never,
+          {
+            messages: [{ role: "user", content: "hello" }],
+          } as never,
+          {} as never,
+        );
+        await collectStreamEvents(await stream);
+      },
+    );
+
+    expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t5_ollama_inference",
+        stage: "ttft",
+        runId: "run-1",
+      }),
+    );
+    expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t5_ollama_inference",
+        stage: "native",
+        totalMs: 90,
+        loadMs: 10,
+        promptEvalMs: 30,
+        evalMs: 40,
+        promptEvalCount: 12,
+        evalCount: 6,
+      }),
+    );
+  });
+
   it("normalizes /v1 baseUrl and maps maxTokens + signal", async () => {
     await withMockNdjsonFetch(
       [

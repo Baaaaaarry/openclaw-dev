@@ -240,6 +240,15 @@ describe("diagnostics-otel service", () => {
       runId: "run-1",
       attempt: 2,
     });
+    emitDiagnosticEvent({
+      type: "latency.segment",
+      segment: "t5_ollama_inference",
+      stage: "native",
+      durationMs: 90,
+      channel: "feishu",
+      provider: "ollama",
+      model: "qwen3:32b",
+    });
 
     expect(telemetryState.counters.get("openclaw.webhook.received")?.add).toHaveBeenCalled();
     expect(
@@ -256,6 +265,14 @@ describe("diagnostics-otel service", () => {
       telemetryState.histograms.get("openclaw.session.stuck_age_ms")?.record,
     ).toHaveBeenCalled();
     expect(telemetryState.counters.get("openclaw.run.attempt")?.add).toHaveBeenCalled();
+    expect(
+      telemetryState.histograms.get("openclaw.latency.segment_ms")?.record,
+    ).toHaveBeenCalledWith(
+      90,
+      expect.objectContaining({
+        "openclaw.segment": "t5_ollama_inference",
+      }),
+    );
 
     const spanNames = telemetryState.tracer.startSpan.mock.calls.map((call) => call[0]);
     expect(spanNames).toContain("openclaw.webhook.processed");

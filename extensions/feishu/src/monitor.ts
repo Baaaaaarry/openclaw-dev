@@ -6,6 +6,8 @@ import {
   type RuntimeEnv,
   type HistoryEntry,
   installRequestBodyLimitGuard,
+  logLatencySegment,
+  type LatencyTraceContext,
 } from "openclaw/plugin-sdk";
 import { resolveFeishuAccount, listEnabledFeishuAccounts } from "./accounts.js";
 import { handleFeishuMessage, type FeishuMessageEvent, type FeishuBotAddedEvent } from "./bot.js";
@@ -33,6 +35,17 @@ const FEISHU_WEBHOOK_RATE_LIMIT_MAX_REQUESTS = 120;
 const FEISHU_WEBHOOK_RATE_LIMIT_MAX_TRACKED_KEYS = 4_096;
 const FEISHU_WEBHOOK_COUNTER_LOG_EVERY = 25;
 const FEISHU_REACTION_VERIFY_TIMEOUT_MS = 1_500;
+
+function parseFeishuTimestampMs(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+  return parsed;
+}
 
 export type FeishuReactionCreatedEvent = {
   message_id: string;
@@ -266,6 +279,30 @@ function registerEventHandlers(
     "im.message.receive_v1": async (data) => {
       try {
         const event = data as unknown as FeishuMessageEvent;
+        const receivedAtMs = Date.now();
+        const createdAtMs = parseFeishuTimestampMs(event.message.create_time);
+        const latencyTrace: LatencyTraceContext = {
+          channel: "feishu",
+          accountId,
+          chatId: event.message.chat_id,
+          messageId: event.message.message_id,
+          source: fireAndForget ? "webhook" : "websocket",
+          feishuMessageCreatedAtMs: createdAtMs,
+          feishuEventReceivedAtMs: receivedAtMs,
+        };
+        if (createdAtMs && receivedAtMs >= createdAtMs) {
+          logLatencySegment({
+            segment: "t1_feishu_inbound",
+            durationMs: receivedAtMs - createdAtMs,
+            startedAtMs: createdAtMs,
+            endedAtMs: receivedAtMs,
+            channel: "feishu",
+            accountId,
+            chatId: event.message.chat_id,
+            messageId: event.message.message_id,
+            source: latencyTrace.source,
+          });
+        }
         const promise = handleFeishuMessage({
           cfg,
           event,
@@ -273,6 +310,7 @@ function registerEventHandlers(
           runtime,
           chatHistories,
           accountId,
+          latencyTrace,
         });
         if (fireAndForget) {
           promise.catch((err) => {
@@ -325,6 +363,14 @@ function registerEventHandlers(
           runtime,
           chatHistories,
           accountId,
+          latencyTrace: {
+            channel: "feishu",
+            accountId,
+            chatId: syntheticEvent.message.chat_id,
+            messageId: syntheticEvent.message.message_id,
+            source: fireAndForget ? "webhook" : "websocket",
+            feishuEventReceivedAtMs: Date.now(),
+          },
         });
         if (fireAndForget) {
           promise.catch((err) => {

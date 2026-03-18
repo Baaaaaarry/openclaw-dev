@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   })),
 }));
 const diagnosticMocks = vi.hoisted(() => ({
+  logLatencySegment: vi.fn(),
   logMessageQueued: vi.fn(),
   logMessageProcessed: vi.fn(),
   logSessionStateChange: vi.fn(),
@@ -94,6 +95,7 @@ vi.mock("./abort.js", () => ({
 }));
 
 vi.mock("../../logging/diagnostic.js", () => ({
+  logLatencySegment: diagnosticMocks.logLatencySegment,
   logMessageQueued: diagnosticMocks.logMessageQueued,
   logMessageProcessed: diagnosticMocks.logMessageProcessed,
   logSessionStateChange: diagnosticMocks.logSessionStateChange,
@@ -209,6 +211,7 @@ describe("dispatchReplyFromConfig", () => {
     resetInboundDedupe();
     acpMocks.listAcpSessionEntries.mockReset().mockResolvedValue([]);
     diagnosticMocks.logMessageQueued.mockClear();
+    diagnosticMocks.logLatencySegment.mockClear();
     diagnosticMocks.logMessageProcessed.mockClear();
     diagnosticMocks.logSessionStateChange.mockClear();
     hookMocks.runner.hasHooks.mockClear();
@@ -1549,5 +1552,40 @@ describe("dispatchReplyFromConfig", () => {
     await dispatchReplyFromConfig({ ctx, cfg: emptyConfig, dispatcher, replyResolver });
     expect(blockReplySentTexts).not.toContain("Reasoning:\n_thinking..._");
     expect(blockReplySentTexts).toContain("The answer is 42");
+  });
+
+  it("records t2 gateway enqueue latency from inbound trace", async () => {
+    setNoAbort();
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      SessionKey: "session:feishu:test",
+      Provider: "feishu",
+      Surface: "feishu",
+      To: "oc_chat",
+      MessageSid: "om_msg_1",
+      LatencyTrace: {
+        source: "websocket",
+        feishuEventReceivedAtMs: Date.now() - 25,
+        messageId: "om_msg_1",
+        chatId: "oc_chat",
+      },
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg: { diagnostics: { enabled: true } } as OpenClawConfig,
+      dispatcher,
+      replyResolver: vi.fn(async () => undefined),
+    });
+
+    expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t2_gateway_enqueue",
+        channel: "feishu",
+        source: "websocket",
+        sessionKey: "session:feishu:test",
+      }),
+    );
+    expect(ctx.LatencyTrace?.gatewayQueuedAtMs).toBeTypeOf("number");
   });
 });

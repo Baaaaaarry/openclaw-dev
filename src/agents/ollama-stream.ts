@@ -9,6 +9,8 @@ import type {
   Usage,
 } from "@mariozechner/pi-ai";
 import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
+import type { DiagnosticTraceIdentity } from "../infra/latency-trace.js";
+import { logLatencySegment } from "../logging/diagnostic.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 
 const log = createSubsystemLogger("ollama-stream");
@@ -411,7 +413,14 @@ function resolveOllamaChatUrl(baseUrl: string): string {
   return `${apiBase}/api/chat`;
 }
 
-export function createOllamaStreamFn(baseUrl: string): StreamFn {
+function toFiniteMs(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return undefined;
+  }
+  return value / 1_000_000;
+}
+
+export function createOllamaStreamFn(baseUrl: string, trace?: DiagnosticTraceIdentity): StreamFn {
   const chatUrl = resolveOllamaChatUrl(baseUrl);
 
   return (model, context, options) => {
@@ -452,6 +461,7 @@ export function createOllamaStreamFn(baseUrl: string): StreamFn {
           headers.Authorization = `Bearer ${options.apiKey}`;
         }
 
+        const requestStartedAt = Date.now();
         const response = await fetch(chatUrl, {
           method: "POST",
           headers,
@@ -472,8 +482,30 @@ export function createOllamaStreamFn(baseUrl: string): StreamFn {
         let accumulatedContent = "";
         const accumulatedToolCalls: OllamaToolCall[] = [];
         let finalResponse: OllamaChatResponse | undefined;
+        let firstChunkAt: number | undefined;
 
         for await (const chunk of parseNdjsonStream(reader)) {
+          if (firstChunkAt === undefined) {
+            firstChunkAt = Date.now();
+            logLatencySegment({
+              segment: "t5_ollama_inference",
+              stage: "ttft",
+              durationMs: firstChunkAt - requestStartedAt,
+              startedAtMs: requestStartedAt,
+              endedAtMs: firstChunkAt,
+              channel: trace?.channel,
+              accountId: trace?.accountId,
+              chatId: trace?.chatId,
+              messageId: trace?.messageId,
+              sessionKey: trace?.sessionKey,
+              sessionId: trace?.sessionId,
+              runId: trace?.runId,
+              provider: model.provider,
+              model: model.id,
+              ttftMs: firstChunkAt - requestStartedAt,
+              transport: "ollama-api-chat",
+            });
+          }
           if (chunk.message?.content) {
             accumulatedContent += chunk.message.content;
           } else if (chunk.message?.reasoning) {
@@ -496,11 +528,41 @@ export function createOllamaStreamFn(baseUrl: string): StreamFn {
         if (!finalResponse) {
           throw new Error("Ollama API stream ended without a final response");
         }
+        const completedAt = Date.now();
+        const totalMs = toFiniteMs(finalResponse.total_duration) ?? completedAt - requestStartedAt;
+        const loadMs = toFiniteMs(finalResponse.load_duration);
+        const promptEvalMs = toFiniteMs(finalResponse.prompt_eval_duration);
+        const evalMs = toFiniteMs(finalResponse.eval_duration);
 
         finalResponse.message.content = accumulatedContent;
         if (accumulatedToolCalls.length > 0) {
           finalResponse.message.tool_calls = accumulatedToolCalls;
         }
+
+        logLatencySegment({
+          segment: "t5_ollama_inference",
+          stage: "native",
+          durationMs: totalMs,
+          startedAtMs: requestStartedAt,
+          endedAtMs: completedAt,
+          channel: trace?.channel,
+          accountId: trace?.accountId,
+          chatId: trace?.chatId,
+          messageId: trace?.messageId,
+          sessionKey: trace?.sessionKey,
+          sessionId: trace?.sessionId,
+          runId: trace?.runId,
+          provider: model.provider,
+          model: model.id,
+          transport: "ollama-api-chat",
+          totalMs,
+          ttftMs: firstChunkAt ? firstChunkAt - requestStartedAt : undefined,
+          loadMs,
+          promptEvalMs,
+          evalMs,
+          promptEvalCount: finalResponse.prompt_eval_count,
+          evalCount: finalResponse.eval_count,
+        });
 
         const assistantMessage = buildAssistantMessage(finalResponse, {
           api: model.api,

@@ -1,4 +1,6 @@
+import type { DiagnosticLatencySegment } from "../infra/diagnostic-events.js";
 import { emitDiagnosticEvent } from "../infra/diagnostic-events.js";
+import type { DiagnosticTraceIdentity } from "../infra/latency-trace.js";
 import {
   diagnosticSessionStates,
   getDiagnosticSessionState,
@@ -252,6 +254,60 @@ export function logRunAttempt(params: SessionRef & { runId: string; attempt: num
     sessionKey: params.sessionKey,
     runId: params.runId,
     attempt: params.attempt,
+  });
+  markActivity();
+}
+
+export function logLatencySegment(
+  params: DiagnosticTraceIdentity & {
+    segment: DiagnosticLatencySegment;
+    stage?: string;
+    durationMs: number;
+    startedAtMs?: number;
+    endedAtMs?: number;
+    source?: string;
+    transport?: string;
+    lane?: string;
+    queueSize?: number;
+    waitMs?: number;
+    totalMs?: number;
+    ttftMs?: number;
+    loadMs?: number;
+    promptEvalMs?: number;
+    evalMs?: number;
+    promptEvalCount?: number;
+    evalCount?: number;
+  },
+) {
+  const payload = [
+    `latency segment: segment=${params.segment}`,
+    params.stage ? `stage=${params.stage}` : undefined,
+    `duration=${Math.max(0, Math.round(params.durationMs))}ms`,
+    params.channel ? `channel=${params.channel}` : undefined,
+    params.accountId ? `accountId=${params.accountId}` : undefined,
+    params.chatId !== undefined ? `chatId=${params.chatId}` : undefined,
+    params.messageId !== undefined ? `messageId=${params.messageId}` : undefined,
+    params.sessionKey ? `sessionKey=${params.sessionKey}` : undefined,
+    params.sessionId ? `sessionId=${params.sessionId}` : undefined,
+    params.runId ? `runId=${params.runId}` : undefined,
+    params.provider ? `provider=${params.provider}` : undefined,
+    params.model ? `model=${params.model}` : undefined,
+    params.source ? `source=${params.source}` : undefined,
+    params.transport ? `transport=${params.transport}` : undefined,
+    params.lane ? `lane=${params.lane}` : undefined,
+    typeof params.loadMs === "number" ? `loadMs=${Math.round(params.loadMs)}` : undefined,
+    typeof params.promptEvalMs === "number"
+      ? `prefillMs=${Math.round(params.promptEvalMs)}`
+      : undefined,
+    typeof params.evalMs === "number" ? `decodeMs=${Math.round(params.evalMs)}` : undefined,
+    typeof params.ttftMs === "number" ? `ttftMs=${Math.round(params.ttftMs)}` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  diag.debug(payload);
+  emitDiagnosticEvent({
+    type: "latency.segment",
+    ...params,
   });
   markActivity();
 }

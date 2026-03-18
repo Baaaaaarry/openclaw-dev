@@ -1,4 +1,4 @@
-import type { ClawdbotConfig, RuntimeEnv } from "openclaw/plugin-sdk";
+import type { ClawdbotConfig, RuntimeEnv, LatencyTraceContext } from "openclaw/plugin-sdk";
 import {
   buildAgentMediaPayload,
   buildPendingHistoryContextFromMap,
@@ -162,6 +162,7 @@ export type FeishuMessageEvent = {
   };
   message: {
     message_id: string;
+    create_time?: string;
     root_id?: string;
     parent_id?: string;
     chat_id: string;
@@ -682,8 +683,9 @@ export async function handleFeishuMessage(params: {
   runtime?: RuntimeEnv;
   chatHistories?: Map<string, HistoryEntry[]>;
   accountId?: string;
+  latencyTrace?: LatencyTraceContext;
 }): Promise<void> {
-  const { cfg, event, botOpenId, runtime, chatHistories, accountId } = params;
+  const { cfg, event, botOpenId, runtime, chatHistories, accountId, latencyTrace } = params;
 
   // Resolve account with merged config
   const account = resolveFeishuAccount({ cfg, accountId });
@@ -1154,6 +1156,16 @@ export async function handleFeishuMessage(params: {
       CommandAuthorized: commandAuthorized,
       OriginatingChannel: "feishu" as const,
       OriginatingTo: feishuTo,
+      LatencyTrace: latencyTrace
+        ? {
+            ...latencyTrace,
+            channel: "feishu",
+            accountId: account.accountId,
+            chatId: ctx.chatId,
+            messageId: ctx.messageId,
+            sessionKey: route.sessionKey,
+          }
+        : undefined,
       ...mediaPayload,
     });
 
@@ -1168,6 +1180,7 @@ export async function handleFeishuMessage(params: {
       rootId: ctx.rootId,
       mentionTargets: ctx.mentionTargets,
       accountId: account.accountId,
+      latencyTrace: ctxPayload.LatencyTrace,
     });
 
     log(`feishu[${account.accountId}]: dispatching to agent (session=${route.sessionKey})`);

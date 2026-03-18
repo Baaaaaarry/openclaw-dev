@@ -505,6 +505,15 @@ export async function runPreparedReply(
       blockReplyBreak: resolvedBlockStreamingBreak,
       ownerNumbers: command.ownerList.length > 0 ? command.ownerList : undefined,
       extraSystemPrompt: extraSystemPrompt || undefined,
+      latencyTrace: sessionCtx.LatencyTrace
+        ? {
+            ...sessionCtx.LatencyTrace,
+            sessionKey,
+            sessionId: sessionIdFinal,
+            provider,
+            model,
+          }
+        : undefined,
       ...(isReasoningTagProvider(provider) ? { enforceFinalTag: true } : {}),
     },
   };

@@ -434,6 +434,8 @@ export {
 export type {
   DiagnosticEventPayload,
   DiagnosticHeartbeatEvent,
+  DiagnosticLatencySegment,
+  DiagnosticLatencySegmentEvent,
   DiagnosticLaneDequeueEvent,
   DiagnosticLaneEnqueueEvent,
   DiagnosticMessageProcessedEvent,
@@ -447,6 +449,15 @@ export type {
   DiagnosticWebhookProcessedEvent,
   DiagnosticWebhookReceivedEvent,
 } from "../infra/diagnostic-events.js";
+export type { DiagnosticTraceIdentity, LatencyTraceContext } from "../infra/latency-trace.js";
+export {
+  buildLatencyCorrelationKey,
+  isLatencyTracePersistEnabled,
+  resolveLatencyTraceFilePath,
+  startLatencyTracePersist,
+  stopLatencyTracePersist,
+} from "../infra/latency-trace-persist.js";
+export { logLatencySegment } from "../logging/diagnostic.js";
 export { detectMime, extensionForMime, getFileExtension } from "../media/mime.js";
 export { extractOriginalFilename } from "../media/store.js";
 

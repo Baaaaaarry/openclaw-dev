@@ -1,4 +1,5 @@
 import type { ChannelId } from "../channels/plugins/types.js";
+import type { LatencyTraceContext } from "../infra/latency-trace.js";
 import type {
   MediaUnderstandingDecision,
   MediaUnderstandingOutput,
@@ -150,6 +151,8 @@ export type MsgContext = {
    * Used for hook confirmation messages like "Session context saved to memory".
    */
   HookMessages?: string[];
+  /** Diagnostic timestamps/correlation for end-to-end latency tracing. */
+  LatencyTrace?: LatencyTraceContext;
 };
 
 export type FinalizedMsgContext = Omit<MsgContext, "CommandAuthorized"> & {
