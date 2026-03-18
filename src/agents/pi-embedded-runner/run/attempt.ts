@@ -42,6 +42,7 @@ import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
+import { createOllamaPayloadLogger } from "../../ollama-payload-log.js";
 import { createOllamaStreamFn, OLLAMA_NATIVE_BASE_URL } from "../../ollama-stream.js";
 import { resolveOwnerDisplaySetting } from "../../owner-display.js";
 import {
@@ -867,7 +868,7 @@ export async function runEmbeddedAttempt(
         const providerBaseUrl =
           typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl.trim() : "";
         const ollamaBaseUrl = modelBaseUrl || providerBaseUrl || OLLAMA_NATIVE_BASE_URL;
-        activeSession.agent.streamFn = createOllamaStreamFn(ollamaBaseUrl, {
+        const ollamaTrace = {
           channel: params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
           accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
           chatId: params.latencyTrace?.chatId ?? params.messageTo,
@@ -877,7 +878,20 @@ export async function runEmbeddedAttempt(
           runId: params.latencyTrace?.runId ?? params.runId,
           provider: params.provider,
           model: params.modelId,
+        };
+        const ollamaPayloadLogger = createOllamaPayloadLogger({
+          env: process.env,
+          baseUrl: ollamaBaseUrl,
+          chatUrl: `${ollamaBaseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "") || OLLAMA_NATIVE_BASE_URL}/api/chat`,
+          trace: ollamaTrace,
         });
+        activeSession.agent.streamFn = createOllamaStreamFn(
+          ollamaBaseUrl,
+          {
+            ...ollamaTrace,
+          },
+          ollamaPayloadLogger ?? undefined,
+        );
       } else {
         // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
         activeSession.agent.streamFn = streamSimple;

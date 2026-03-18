@@ -387,6 +387,57 @@ describe("createOllamaStreamFn", () => {
     );
   });
 
+  it("records ollama request and final response payloads", async () => {
+    const payloadLogger = {
+      recordRequest: vi.fn(),
+      recordResponse: vi.fn(),
+      recordError: vi.fn(),
+    };
+
+    await withMockNdjsonFetch(
+      [
+        '{"model":"m","created_at":"t","message":{"role":"assistant","content":"ok"},"done":false}',
+        '{"model":"m","created_at":"t","message":{"role":"assistant","content":""},"done":true,"prompt_eval_count":1,"eval_count":1}',
+      ],
+      async () => {
+        const streamFn = createOllamaStreamFn(
+          "http://ollama-host:11434",
+          { runId: "run-1", sessionKey: "session-1" },
+          payloadLogger,
+        );
+        const stream = streamFn(
+          {
+            id: "qwen3:32b",
+            api: "ollama",
+            provider: "ollama",
+            contextWindow: 8192,
+          } as never,
+          {
+            messages: [{ role: "user", content: "hello" }],
+          } as never,
+          {} as never,
+        );
+        await collectStreamEvents(await stream);
+      },
+    );
+
+    expect(payloadLogger.recordRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "qwen3:32b",
+        stream: true,
+      }),
+    );
+    expect(payloadLogger.recordResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        done: true,
+        message: expect.objectContaining({
+          content: "ok",
+        }),
+      }),
+    );
+    expect(payloadLogger.recordError).not.toHaveBeenCalled();
+  });
+
   it("normalizes /v1 baseUrl and maps maxTokens + signal", async () => {
     await withMockNdjsonFetch(
       [

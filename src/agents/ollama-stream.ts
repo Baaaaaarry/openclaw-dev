@@ -12,6 +12,7 @@ import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type { DiagnosticTraceIdentity } from "../infra/latency-trace.js";
 import { logLatencySegment } from "../logging/diagnostic.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import type { OllamaPayloadLogger } from "./ollama-payload-log.js";
 
 const log = createSubsystemLogger("ollama-stream");
 
@@ -420,7 +421,11 @@ function toFiniteMs(value: unknown): number | undefined {
   return value / 1_000_000;
 }
 
-export function createOllamaStreamFn(baseUrl: string, trace?: DiagnosticTraceIdentity): StreamFn {
+export function createOllamaStreamFn(
+  baseUrl: string,
+  trace?: DiagnosticTraceIdentity,
+  payloadLogger?: Pick<OllamaPayloadLogger, "recordRequest" | "recordResponse" | "recordError">,
+): StreamFn {
   const chatUrl = resolveOllamaChatUrl(baseUrl);
 
   return (model, context, options) => {
@@ -461,6 +466,7 @@ export function createOllamaStreamFn(baseUrl: string, trace?: DiagnosticTraceIde
           headers.Authorization = `Bearer ${options.apiKey}`;
         }
 
+        payloadLogger?.recordRequest(body);
         const requestStartedAt = Date.now();
         const response = await fetch(chatUrl, {
           method: "POST",
@@ -538,6 +544,7 @@ export function createOllamaStreamFn(baseUrl: string, trace?: DiagnosticTraceIde
         if (accumulatedToolCalls.length > 0) {
           finalResponse.message.tool_calls = accumulatedToolCalls;
         }
+        payloadLogger?.recordResponse(finalResponse);
 
         logLatencySegment({
           segment: "t5_ollama_inference",
@@ -579,6 +586,7 @@ export function createOllamaStreamFn(baseUrl: string, trace?: DiagnosticTraceIde
           message: assistantMessage,
         });
       } catch (err) {
+        payloadLogger?.recordError(err);
         const errorMessage = err instanceof Error ? err.message : String(err);
         stream.push({
           type: "error",
