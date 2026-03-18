@@ -859,7 +859,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/plugin-sdk
 
-  extensions/msteams:
+  extensions/msteams._disabled:
     dependencies:
       '@azure/identity':
         specifier: ^4.13.1
