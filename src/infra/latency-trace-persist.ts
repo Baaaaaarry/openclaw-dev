@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { getQueuedFileWriter, type QueuedFileWriter } from "../agents/queued-file-writer.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -8,6 +9,7 @@ import type { DiagnosticEventPayload, DiagnosticLatencySegmentEvent } from "./di
 import { onDiagnosticEvent } from "./diagnostic-events.js";
 
 const writers = new Map<string, QueuedFileWriter>();
+const DEFAULT_LATENCY_TRACE_FILENAME = "latency-segments.jsonl";
 
 type LatencyTracePersistState = {
   filePath?: string;
@@ -27,9 +29,29 @@ function getState(): LatencyTracePersistState {
 export function resolveLatencyTraceFilePath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.OPENCLAW_LATENCY_TRACE_FILE?.trim();
   if (override) {
-    return resolveUserPath(override);
+    const resolved = resolveUserPath(override);
+    const normalized = resolved.replace(/[/\\]+$/, "");
+    try {
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+        return path.join(resolved, DEFAULT_LATENCY_TRACE_FILENAME);
+      }
+    } catch {
+      // ignore and fall back to direct path handling
+    }
+    try {
+      if (
+        normalized !== resolved &&
+        fs.existsSync(normalized) &&
+        fs.statSync(normalized).isDirectory()
+      ) {
+        return path.join(normalized, DEFAULT_LATENCY_TRACE_FILENAME);
+      }
+    } catch {
+      // ignore and fall back to direct path handling
+    }
+    return resolved;
   }
-  return path.join(resolveStateDir(env), "logs", "latency-segments.jsonl");
+  return path.join(resolveStateDir(env), "logs", DEFAULT_LATENCY_TRACE_FILENAME);
 }
 
 export function isLatencyTracePersistEnabled(
