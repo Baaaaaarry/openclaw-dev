@@ -3492,4 +3492,49 @@ describe("sendPolicy deny — suppress delivery, not processing (#53328)", () =>
     // ...but no final reply is delivered.
     expect(dispatcher.sendFinalReply).not.toHaveBeenCalled();
   });
+
+  it("records t2 gateway enqueue latency when latency trace env is enabled without diagnostics", async () => {
+    setNoAbort();
+    const prevLatencyTrace = process.env.OPENCLAW_LATENCY_TRACE;
+    process.env.OPENCLAW_LATENCY_TRACE = "1";
+    const dispatcher = createDispatcher();
+    const ctx = buildTestCtx({
+      SessionKey: "session:feishu:test",
+      Provider: "feishu",
+      Surface: "feishu",
+      To: "oc_chat",
+      MessageSid: "om_msg_2",
+      LatencyTrace: {
+        source: "websocket",
+        feishuEventReceivedAtMs: Date.now() - 25,
+        messageId: "om_msg_2",
+        chatId: "oc_chat",
+      },
+    });
+
+    try {
+      await dispatchReplyFromConfig({
+        ctx,
+        cfg: {} as OpenClawConfig,
+        dispatcher,
+        replyResolver: vi.fn(async () => undefined),
+      });
+    } finally {
+      if (prevLatencyTrace === undefined) {
+        delete process.env.OPENCLAW_LATENCY_TRACE;
+      } else {
+        process.env.OPENCLAW_LATENCY_TRACE = prevLatencyTrace;
+      }
+    }
+
+    expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        segment: "t2_gateway_enqueue",
+        channel: "feishu",
+        source: "websocket",
+        sessionKey: "session:feishu:test",
+      }),
+    );
+    expect(ctx.LatencyTrace?.gatewayQueuedAtMs).toBeTypeOf("number");
+  });
 });

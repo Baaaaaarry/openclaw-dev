@@ -25,6 +25,7 @@ import {
 } from "../../hooks/message-hook-mappers.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../../infra/errors.js";
+import { isLatencyTracePersistEnabled } from "../../infra/latency-trace-persist.js";
 import {
   logLatencySegment,
   logMessageProcessed,
@@ -215,12 +216,14 @@ export async function dispatchReplyFromConfig(
 ): Promise<DispatchFromConfigResult> {
   const { ctx, cfg, dispatcher } = params;
   const diagnosticsEnabled = isDiagnosticsEnabled(cfg);
+  const latencyTraceEnabled = diagnosticsEnabled || isLatencyTracePersistEnabled(cfg);
   const channel = normalizeLowercaseStringOrEmpty(ctx.Surface ?? ctx.Provider ?? "unknown");
   const chatId = ctx.To ?? ctx.From;
   const messageId = ctx.MessageSid ?? ctx.MessageSidFirst ?? ctx.MessageSidLast;
   const sessionKey = ctx.SessionKey;
   const startTime = diagnosticsEnabled ? Date.now() : 0;
   const canTrackSession = diagnosticsEnabled && Boolean(sessionKey);
+  const canTrackLatency = latencyTraceEnabled && Boolean(sessionKey);
 
   const recordProcessed = (
     outcome: "completed" | "skipped" | "error",
@@ -245,12 +248,13 @@ export async function dispatchReplyFromConfig(
   };
 
   const markProcessing = () => {
-    if (!canTrackSession || !sessionKey) {
+    if ((!canTrackSession && !canTrackLatency) || !sessionKey) {
       return;
     }
     const now = Date.now();
     const trace = ctx.LatencyTrace;
     if (
+      latencyTraceEnabled &&
       trace?.feishuEventReceivedAtMs &&
       Number.isFinite(trace.feishuEventReceivedAtMs) &&
       now >= trace.feishuEventReceivedAtMs
@@ -268,7 +272,7 @@ export async function dispatchReplyFromConfig(
         source: trace.source,
       });
     }
-    if (trace) {
+    if (latencyTraceEnabled && trace) {
       trace.gatewayQueuedAtMs = now;
       trace.channel = channel;
       trace.accountId ??= ctx.AccountId;
@@ -276,12 +280,14 @@ export async function dispatchReplyFromConfig(
       trace.messageId ??= messageId;
       trace.sessionKey ??= sessionKey;
     }
-    logMessageQueued({ sessionKey, channel, source: "dispatch" });
-    logSessionStateChange({
-      sessionKey,
-      state: "processing",
-      reason: "message_start",
-    });
+    if (canTrackSession) {
+      logMessageQueued({ sessionKey, channel, source: "dispatch" });
+      logSessionStateChange({
+        sessionKey,
+        state: "processing",
+        reason: "message_start",
+      });
+    }
   };
 
   const markIdle = (reason: string) => {
