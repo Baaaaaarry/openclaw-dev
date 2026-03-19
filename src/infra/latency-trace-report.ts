@@ -18,6 +18,7 @@ export type LatencyMessageSummary = {
   runId?: string;
   provider?: string;
   model?: string;
+  feishuEventAgeMs?: number;
   t1FeishuInboundMs?: number;
   t2GatewayEnqueueMs?: number;
   t3WorkerQueueWaitMs?: number;
@@ -84,6 +85,9 @@ function resolveRecordKey(record: PersistedLatencySegmentRecord): string {
 
 function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySegmentRecord): void {
   switch (record.segment) {
+    case "feishu_event_age":
+      summary.feishuEventAgeMs = record.durationMs;
+      return;
     case "t1_feishu_inbound":
       summary.t1FeishuInboundMs = record.durationMs;
       return;
@@ -192,6 +196,7 @@ function summarizeSeries(values: number[]): SeriesSummary {
 
 function buildSeriesSummary(messages: LatencyMessageSummary[]): Record<string, SeriesSummary> {
   const fields: Array<[keyof LatencyMessageSummary, string]> = [
+    ["feishuEventAgeMs", "feishu_event_age_ms"],
     ["t1FeishuInboundMs", "t1_feishu_inbound_ms"],
     ["t2GatewayEnqueueMs", "t2_gateway_enqueue_ms"],
     ["t3WorkerQueueWaitMs", "t3_worker_queue_wait_ms"],
@@ -233,6 +238,7 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
         message.channel ? `channel=${message.channel}` : undefined,
         message.messageId !== undefined ? `messageId=${message.messageId}` : undefined,
         message.runId ? `runId=${message.runId}` : undefined,
+        `feishu.eventAge=${formatMs(message.feishuEventAgeMs)}`,
         `T1=${formatMs(message.t1FeishuInboundMs)}`,
         `T2=${formatMs(message.t2GatewayEnqueueMs)}`,
         `T3=${formatMs(message.t3WorkerQueueWaitMs)}`,

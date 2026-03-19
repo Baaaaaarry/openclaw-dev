@@ -1,6 +1,15 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { DiagnosticTraceIdentity } from "./latency-trace.js";
 
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
+export type DiagnosticLatencySegment =
+  | "feishu_event_age"
+  | "t1_feishu_inbound"
+  | "t2_gateway_enqueue"
+  | "t3_worker_queue_wait"
+  | "t4_agent_preprocess"
+  | "t5_ollama_inference"
+  | "t6_feishu_return";
 
 type DiagnosticBaseEvent = {
   ts: number;
@@ -122,6 +131,28 @@ export type DiagnosticRunAttemptEvent = DiagnosticBaseEvent & {
   attempt: number;
 };
 
+export type DiagnosticLatencySegmentEvent = DiagnosticBaseEvent &
+  DiagnosticTraceIdentity & {
+    type: "latency.segment";
+    segment: DiagnosticLatencySegment;
+    stage?: string;
+    durationMs: number;
+    startedAtMs?: number;
+    endedAtMs?: number;
+    source?: string;
+    transport?: string;
+    lane?: string;
+    queueSize?: number;
+    waitMs?: number;
+    totalMs?: number;
+    ttftMs?: number;
+    loadMs?: number;
+    promptEvalMs?: number;
+    evalMs?: number;
+    promptEvalCount?: number;
+    evalCount?: number;
+  };
+
 export type DiagnosticHeartbeatEvent = DiagnosticBaseEvent & {
   type: "diagnostic.heartbeat";
   webhooks: {
@@ -200,6 +231,7 @@ export type DiagnosticEventPayload =
   | DiagnosticLaneEnqueueEvent
   | DiagnosticLaneDequeueEvent
   | DiagnosticRunAttemptEvent
+  | DiagnosticLatencySegmentEvent
   | DiagnosticHeartbeatEvent
   | DiagnosticToolLoopEvent
   | DiagnosticMemorySampleEvent
