@@ -68,12 +68,7 @@ export function buildLatencyCorrelationKey(
   >,
 ): string {
   if (evt.messageId !== undefined) {
-    return [
-      evt.channel ?? "unknown",
-      evt.accountId ?? "default",
-      evt.chatId ?? "unknown-chat",
-      evt.messageId,
-    ].join("|");
+    return [evt.channel ?? "unknown", evt.accountId ?? "default", evt.messageId].join("|");
   }
   if (evt.runId) {
     return `run|${evt.runId}`;

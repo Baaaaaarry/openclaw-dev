@@ -28,7 +28,7 @@ describe("latency-trace-persist", () => {
         chatId: "oc_chat",
         messageId: "om_msg_1",
       }),
-    ).toBe("feishu|main|oc_chat|om_msg_1");
+    ).toBe("feishu|main|om_msg_1");
   });
 
   it("persists latency segments to jsonl", async () => {
@@ -55,7 +55,7 @@ describe("latency-trace-persist", () => {
     const content = await fs.readFile(file, "utf8");
     expect(content).toContain('"type":"latency.segment"');
     expect(content).toContain('"segment":"t2_gateway_enqueue"');
-    expect(content).toContain('"correlationKey":"feishu|main|oc_chat|om_msg_1"');
+    expect(content).toContain('"correlationKey":"feishu|main|om_msg_1"');
   });
 
   it("treats OPENCLAW_LATENCY_TRACE_FILE directory overrides as jsonl output directories", async () => {

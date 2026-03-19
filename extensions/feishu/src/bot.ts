@@ -5,6 +5,7 @@ import {
   clearHistoryEntriesIfEnabled,
   createScopedPairingAccess,
   DEFAULT_GROUP_HISTORY_LIMIT,
+  logLatencySegment,
   type HistoryEntry,
   recordPendingHistoryEntryIfEnabled,
   resolveOpenProviderRuntimeGroupPolicy,
@@ -1168,6 +1169,28 @@ export async function handleFeishuMessage(params: {
         : undefined,
       ...mediaPayload,
     });
+    const pluginReadyAtMs = Date.now();
+    if (
+      ctxPayload.LatencyTrace?.feishuEventReceivedAtMs &&
+      Number.isFinite(ctxPayload.LatencyTrace.feishuEventReceivedAtMs) &&
+      pluginReadyAtMs >= ctxPayload.LatencyTrace.feishuEventReceivedAtMs
+    ) {
+      logLatencySegment({
+        segment: "t1_feishu_inbound",
+        durationMs: pluginReadyAtMs - ctxPayload.LatencyTrace.feishuEventReceivedAtMs,
+        startedAtMs: ctxPayload.LatencyTrace.feishuEventReceivedAtMs,
+        endedAtMs: pluginReadyAtMs,
+        channel: "feishu",
+        accountId: account.accountId,
+        chatId: ctx.chatId,
+        messageId: ctx.messageId,
+        sessionKey: route.sessionKey,
+        source: ctxPayload.LatencyTrace.source,
+      });
+    }
+    if (ctxPayload.LatencyTrace) {
+      ctxPayload.LatencyTrace.feishuPluginReadyAtMs = pluginReadyAtMs;
+    }
 
     const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
       cfg,

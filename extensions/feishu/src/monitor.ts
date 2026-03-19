@@ -292,7 +292,7 @@ function registerEventHandlers(
         };
         if (createdAtMs && receivedAtMs >= createdAtMs) {
           logLatencySegment({
-            segment: "t1_feishu_inbound",
+            segment: "feishu_event_age",
             durationMs: receivedAtMs - createdAtMs,
             startedAtMs: createdAtMs,
             endedAtMs: receivedAtMs,

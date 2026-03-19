@@ -139,23 +139,24 @@ export async function dispatchReplyFromConfig(params: {
     }
     const now = Date.now();
     const trace = ctx.LatencyTrace;
+    const latencyStartedAtMs = trace?.feishuPluginReadyAtMs ?? trace?.feishuEventReceivedAtMs;
     if (
       latencyTraceEnabled &&
-      trace?.feishuEventReceivedAtMs &&
-      Number.isFinite(trace.feishuEventReceivedAtMs) &&
-      now >= trace.feishuEventReceivedAtMs
+      latencyStartedAtMs &&
+      Number.isFinite(latencyStartedAtMs) &&
+      now >= latencyStartedAtMs
     ) {
       logLatencySegment({
         segment: "t2_gateway_enqueue",
-        durationMs: now - trace.feishuEventReceivedAtMs,
-        startedAtMs: trace.feishuEventReceivedAtMs,
+        durationMs: now - latencyStartedAtMs,
+        startedAtMs: latencyStartedAtMs,
         endedAtMs: now,
         channel,
-        accountId: ctx.AccountId,
-        chatId,
-        messageId,
+        accountId: trace?.accountId ?? ctx.AccountId,
+        chatId: trace?.chatId ?? chatId,
+        messageId: trace?.messageId ?? messageId,
         sessionKey,
-        source: trace.source,
+        source: trace?.source,
       });
     }
     if (latencyTraceEnabled && trace) {
