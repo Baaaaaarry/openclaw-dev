@@ -762,6 +762,28 @@ export async function handleFeishuMessage(params: {
     }
   }
 
+  const pluginReadyAtMs = Date.now();
+  if (
+    latencyTrace?.feishuEventReceivedAtMs &&
+    Number.isFinite(latencyTrace.feishuEventReceivedAtMs) &&
+    pluginReadyAtMs >= latencyTrace.feishuEventReceivedAtMs
+  ) {
+    logLatencySegment({
+      segment: "t1_feishu_inbound",
+      durationMs: pluginReadyAtMs - latencyTrace.feishuEventReceivedAtMs,
+      startedAtMs: latencyTrace.feishuEventReceivedAtMs,
+      endedAtMs: pluginReadyAtMs,
+      channel: "feishu",
+      accountId: account.accountId,
+      chatId: ctx.chatId,
+      messageId: ctx.messageId,
+      source: latencyTrace.source,
+    });
+  }
+  if (latencyTrace) {
+    latencyTrace.feishuPluginReadyAtMs = pluginReadyAtMs;
+  }
+
   log(
     `feishu[${account.accountId}]: received message from ${ctx.senderOpenId} in ${ctx.chatId} (${ctx.chatType})`,
   );
@@ -1169,28 +1191,6 @@ export async function handleFeishuMessage(params: {
         : undefined,
       ...mediaPayload,
     });
-    const pluginReadyAtMs = Date.now();
-    if (
-      ctxPayload.LatencyTrace?.feishuEventReceivedAtMs &&
-      Number.isFinite(ctxPayload.LatencyTrace.feishuEventReceivedAtMs) &&
-      pluginReadyAtMs >= ctxPayload.LatencyTrace.feishuEventReceivedAtMs
-    ) {
-      logLatencySegment({
-        segment: "t1_feishu_inbound",
-        durationMs: pluginReadyAtMs - ctxPayload.LatencyTrace.feishuEventReceivedAtMs,
-        startedAtMs: ctxPayload.LatencyTrace.feishuEventReceivedAtMs,
-        endedAtMs: pluginReadyAtMs,
-        channel: "feishu",
-        accountId: account.accountId,
-        chatId: ctx.chatId,
-        messageId: ctx.messageId,
-        sessionKey: route.sessionKey,
-        source: ctxPayload.LatencyTrace.source,
-      });
-    }
-    if (ctxPayload.LatencyTrace) {
-      ctxPayload.LatencyTrace.feishuPluginReadyAtMs = pluginReadyAtMs;
-    }
 
     const { dispatcher, replyOptions, markDispatchIdle } = createFeishuReplyDispatcher({
       cfg,
