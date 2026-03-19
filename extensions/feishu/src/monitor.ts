@@ -280,29 +280,14 @@ function registerEventHandlers(
       try {
         const event = data as unknown as FeishuMessageEvent;
         const receivedAtMs = Date.now();
-        const createdAtMs = parseFeishuTimestampMs(event.message.create_time);
         const latencyTrace: LatencyTraceContext = {
           channel: "feishu",
           accountId,
           chatId: event.message.chat_id,
           messageId: event.message.message_id,
           source: fireAndForget ? "webhook" : "websocket",
-          feishuMessageCreatedAtMs: createdAtMs,
           feishuEventReceivedAtMs: receivedAtMs,
         };
-        if (createdAtMs && receivedAtMs >= createdAtMs) {
-          logLatencySegment({
-            segment: "feishu_event_age",
-            durationMs: receivedAtMs - createdAtMs,
-            startedAtMs: createdAtMs,
-            endedAtMs: receivedAtMs,
-            channel: "feishu",
-            accountId,
-            chatId: event.message.chat_id,
-            messageId: event.message.message_id,
-            source: latencyTrace.source,
-          });
-        }
         const promise = handleFeishuMessage({
           cfg,
           event,

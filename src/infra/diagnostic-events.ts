@@ -3,7 +3,6 @@ import type { DiagnosticTraceIdentity } from "./latency-trace.js";
 
 export type DiagnosticSessionState = "idle" | "processing" | "waiting";
 export type DiagnosticLatencySegment =
-  | "feishu_event_age"
   | "t1_feishu_inbound"
   | "t2_gateway_enqueue"
   | "t3_worker_queue_wait"
