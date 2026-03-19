@@ -23,13 +23,17 @@ export type LatencyMessageSummary = {
   t2GatewayEnqueueMs?: number;
   t3WorkerQueueWaitMs?: number;
   t4AgentPreprocessMs?: number;
+  t5OllamaCallCount?: number;
   t5OllamaTtftMs?: number;
+  t5OllamaTtftSumMs?: number;
   t5OllamaTotalMs?: number;
   t5OllamaLoadMs?: number;
   t5OllamaPrefillMs?: number;
   t5OllamaDecodeMs?: number;
   t6FeishuFirstAckMs?: number;
   t6FeishuFinalAckMs?: number;
+  localFirstVisibleMs?: number;
+  localCompleteMs?: number;
 };
 
 export type SeriesSummary = {
@@ -83,6 +87,42 @@ function resolveRecordKey(record: PersistedLatencySegmentRecord): string {
   return record.correlationKey ?? buildLatencyCorrelationKey(record);
 }
 
+function addMaybeNumber(current: number | undefined, next: number | undefined): number | undefined {
+  if (typeof next !== "number" || !Number.isFinite(next)) {
+    return current;
+  }
+  return (current ?? 0) + next;
+}
+
+function recalculateDerived(summary: LatencyMessageSummary): void {
+  const firstVisibleParts = [
+    summary.t1FeishuInboundMs,
+    summary.t2GatewayEnqueueMs,
+    summary.t3WorkerQueueWaitMs,
+    summary.t4AgentPreprocessMs,
+    summary.t5OllamaTtftMs,
+    summary.t6FeishuFirstAckMs,
+  ];
+  if (firstVisibleParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    summary.localFirstVisibleMs = (firstVisibleParts as number[]).reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+  }
+
+  const completeParts = [
+    summary.t1FeishuInboundMs,
+    summary.t2GatewayEnqueueMs,
+    summary.t3WorkerQueueWaitMs,
+    summary.t4AgentPreprocessMs,
+    summary.t5OllamaTotalMs,
+    summary.t6FeishuFinalAckMs,
+  ];
+  if (completeParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    summary.localCompleteMs = (completeParts as number[]).reduce((sum, value) => sum + value, 0);
+  }
+}
+
 function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySegmentRecord): void {
   switch (record.segment) {
     case "feishu_event_age":
@@ -102,13 +142,27 @@ function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySe
       return;
     case "t5_ollama_inference":
       if (record.stage === "ttft") {
-        summary.t5OllamaTtftMs = record.durationMs;
+        summary.t5OllamaTtftMs ??= record.durationMs;
+        summary.t5OllamaTtftSumMs = addMaybeNumber(summary.t5OllamaTtftSumMs, record.durationMs);
         return;
       }
-      summary.t5OllamaTotalMs = record.totalMs ?? record.durationMs;
-      summary.t5OllamaLoadMs = toFiniteNumber(record.loadMs);
-      summary.t5OllamaPrefillMs = toFiniteNumber(record.promptEvalMs);
-      summary.t5OllamaDecodeMs = toFiniteNumber(record.evalMs);
+      summary.t5OllamaCallCount = (summary.t5OllamaCallCount ?? 0) + 1;
+      summary.t5OllamaTotalMs = addMaybeNumber(
+        summary.t5OllamaTotalMs,
+        record.totalMs ?? record.durationMs,
+      );
+      summary.t5OllamaLoadMs = addMaybeNumber(
+        summary.t5OllamaLoadMs,
+        toFiniteNumber(record.loadMs),
+      );
+      summary.t5OllamaPrefillMs = addMaybeNumber(
+        summary.t5OllamaPrefillMs,
+        toFiniteNumber(record.promptEvalMs),
+      );
+      summary.t5OllamaDecodeMs = addMaybeNumber(
+        summary.t5OllamaDecodeMs,
+        toFiniteNumber(record.evalMs),
+      );
       summary.t5OllamaTtftMs = summary.t5OllamaTtftMs ?? toFiniteNumber(record.ttftMs);
       return;
     case "t6_feishu_return":
@@ -153,6 +207,7 @@ export function summarizeLatencyRecords(
     summary.provider ??= record.provider;
     summary.model ??= record.model;
     applySegment(summary, record);
+    recalculateDerived(summary);
     grouped.set(key, summary);
   }
 
@@ -201,13 +256,17 @@ function buildSeriesSummary(messages: LatencyMessageSummary[]): Record<string, S
     ["t2GatewayEnqueueMs", "t2_gateway_enqueue_ms"],
     ["t3WorkerQueueWaitMs", "t3_worker_queue_wait_ms"],
     ["t4AgentPreprocessMs", "t4_agent_preprocess_ms"],
+    ["t5OllamaCallCount", "t5_ollama_call_count"],
     ["t5OllamaTtftMs", "t5_ollama_ttft_ms"],
+    ["t5OllamaTtftSumMs", "t5_ollama_ttft_sum_ms"],
     ["t5OllamaTotalMs", "t5_ollama_total_ms"],
     ["t5OllamaLoadMs", "t5_ollama_load_ms"],
     ["t5OllamaPrefillMs", "t5_ollama_prefill_ms"],
     ["t5OllamaDecodeMs", "t5_ollama_decode_ms"],
     ["t6FeishuFirstAckMs", "t6_feishu_first_ack_ms"],
     ["t6FeishuFinalAckMs", "t6_feishu_final_ack_ms"],
+    ["localFirstVisibleMs", "e2e_local_first_visible_ms"],
+    ["localCompleteMs", "e2e_local_complete_ms"],
   ];
   const output: Record<string, SeriesSummary> = {};
   for (const [field, name] of fields) {
@@ -219,6 +278,10 @@ function buildSeriesSummary(messages: LatencyMessageSummary[]): Record<string, S
   return output;
 }
 
+function isCountSeries(name: string): boolean {
+  return name.endsWith("_count");
+}
+
 function formatMs(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "-";
@@ -226,11 +289,18 @@ function formatMs(value: number | undefined): string {
   return `${value.toFixed(1)}ms`;
 }
 
+function formatCount(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  return String(Math.round(value));
+}
+
 export function formatLatencyReportText(report: LatencyAggregateReport): string {
   const lines: string[] = [];
   lines.push(`recordsScanned=${report.recordsScanned} messages=${report.messages.length}`);
   lines.push("");
-  lines.push("Per-message T1-T6:");
+  lines.push("Per-message Summary:");
   for (const message of report.messages) {
     lines.push(
       [
@@ -243,23 +313,51 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
         `T2=${formatMs(message.t2GatewayEnqueueMs)}`,
         `T3=${formatMs(message.t3WorkerQueueWaitMs)}`,
         `T4=${formatMs(message.t4AgentPreprocessMs)}`,
-        `T5.ttft=${formatMs(message.t5OllamaTtftMs)}`,
-        `T5.total=${formatMs(message.t5OllamaTotalMs)}`,
-        `T5.load=${formatMs(message.t5OllamaLoadMs)}`,
-        `T5.prefill=${formatMs(message.t5OllamaPrefillMs)}`,
-        `T5.decode=${formatMs(message.t5OllamaDecodeMs)}`,
+        `T5.calls=${formatCount(message.t5OllamaCallCount)}`,
+        `T5.ttft.first=${formatMs(message.t5OllamaTtftMs)}`,
+        `T5.ttft.sum=${formatMs(message.t5OllamaTtftSumMs)}`,
+        `T5.total.sum=${formatMs(message.t5OllamaTotalMs)}`,
+        `T5.load.sum=${formatMs(message.t5OllamaLoadMs)}`,
+        `T5.prefill.sum=${formatMs(message.t5OllamaPrefillMs)}`,
+        `T5.decode.sum=${formatMs(message.t5OllamaDecodeMs)}`,
         `T6.first=${formatMs(message.t6FeishuFirstAckMs)}`,
         `T6.final=${formatMs(message.t6FeishuFinalAckMs)}`,
+        `E2E.local.first=${formatMs(message.localFirstVisibleMs)}`,
+        `E2E.local.complete=${formatMs(message.localCompleteMs)}`,
       ]
         .filter(Boolean)
         .join(" "),
     );
   }
   lines.push("");
-  lines.push("Series summary (avg/p95/p99):");
-  for (const [name, summary] of Object.entries(report.series)) {
+  lines.push("Derived summary:");
+  lines.push("note: feishu.eventAge is reported separately and excluded from local E2E.");
+  for (const name of [
+    "e2e_local_first_visible_ms",
+    "e2e_local_complete_ms",
+    "feishu_event_age_ms",
+  ]) {
+    const summary = report.series[name];
+    if (!summary) {
+      continue;
+    }
     lines.push(
       `${name} count=${summary.count} avg=${formatMs(summary.avg)} p95=${formatMs(summary.p95)} p99=${formatMs(summary.p99)}`,
+    );
+  }
+  lines.push("");
+  lines.push("Series summary (avg/p95/p99):");
+  for (const [name, summary] of Object.entries(report.series)) {
+    if (
+      name === "e2e_local_first_visible_ms" ||
+      name === "e2e_local_complete_ms" ||
+      name === "feishu_event_age_ms"
+    ) {
+      continue;
+    }
+    const formatter = isCountSeries(name) ? formatCount : formatMs;
+    lines.push(
+      `${name} count=${summary.count} avg=${formatter(summary.avg)} p95=${formatter(summary.p95)} p99=${formatter(summary.p99)}`,
     );
   }
   return lines.join("\n");
