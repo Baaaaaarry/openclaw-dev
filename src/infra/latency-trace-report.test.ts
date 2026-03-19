@@ -11,15 +11,6 @@ describe("latency-trace-report", () => {
       [
         JSON.stringify({
           type: "latency.segment",
-          segment: "feishu_event_age",
-          durationMs: 25,
-          channel: "feishu",
-          accountId: "main",
-          chatId: "oc_chat",
-          messageId: "om_msg_1",
-        }),
-        JSON.stringify({
-          type: "latency.segment",
           segment: "t1_feishu_inbound",
           durationMs: 10,
           channel: "feishu",
@@ -127,7 +118,6 @@ describe("latency-trace-report", () => {
 
     const report = summarizeLatencyRecords(records);
     expect(report.messages).toHaveLength(1);
-    expect(report.messages[0]?.feishuEventAgeMs).toBe(25);
     expect(report.messages[0]?.t1FeishuInboundMs).toBe(10);
     expect(report.messages[0]?.t5OllamaTtftMs).toBe(80);
     expect(report.messages[0]?.t5OllamaTtftSumMs).toBe(120);
@@ -157,7 +147,6 @@ describe("latency-trace-report", () => {
     const text = formatLatencyReportText(report);
     expect(text).toContain("Per-message Summary:");
     expect(text).toContain("Derived summary:");
-    expect(text).toContain("feishu.eventAge=-");
     expect(text).toContain("T2=12.0ms");
     expect(text).toContain("t5_ollama_call_count");
     expect(text).toContain("t2_gateway_enqueue_ms");

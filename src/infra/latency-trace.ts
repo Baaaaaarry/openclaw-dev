@@ -12,7 +12,6 @@ export type DiagnosticTraceIdentity = {
 
 export type LatencyTraceContext = DiagnosticTraceIdentity & {
   source?: "websocket" | "webhook";
-  feishuMessageCreatedAtMs?: number;
   feishuEventReceivedAtMs?: number;
   feishuPluginReadyAtMs?: number;
   gatewayQueuedAtMs?: number;

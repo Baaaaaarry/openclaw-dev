@@ -18,7 +18,6 @@ export type LatencyMessageSummary = {
   runId?: string;
   provider?: string;
   model?: string;
-  feishuEventAgeMs?: number;
   t1FeishuInboundMs?: number;
   t2GatewayEnqueueMs?: number;
   t3WorkerQueueWaitMs?: number;
@@ -125,9 +124,6 @@ function recalculateDerived(summary: LatencyMessageSummary): void {
 
 function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySegmentRecord): void {
   switch (record.segment) {
-    case "feishu_event_age":
-      summary.feishuEventAgeMs = record.durationMs;
-      return;
     case "t1_feishu_inbound":
       summary.t1FeishuInboundMs = record.durationMs;
       return;
@@ -251,7 +247,6 @@ function summarizeSeries(values: number[]): SeriesSummary {
 
 function buildSeriesSummary(messages: LatencyMessageSummary[]): Record<string, SeriesSummary> {
   const fields: Array<[keyof LatencyMessageSummary, string]> = [
-    ["feishuEventAgeMs", "feishu_event_age_ms"],
     ["t1FeishuInboundMs", "t1_feishu_inbound_ms"],
     ["t2GatewayEnqueueMs", "t2_gateway_enqueue_ms"],
     ["t3WorkerQueueWaitMs", "t3_worker_queue_wait_ms"],
@@ -308,7 +303,6 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
         message.channel ? `channel=${message.channel}` : undefined,
         message.messageId !== undefined ? `messageId=${message.messageId}` : undefined,
         message.runId ? `runId=${message.runId}` : undefined,
-        `feishu.eventAge=${formatMs(message.feishuEventAgeMs)}`,
         `T1=${formatMs(message.t1FeishuInboundMs)}`,
         `T2=${formatMs(message.t2GatewayEnqueueMs)}`,
         `T3=${formatMs(message.t3WorkerQueueWaitMs)}`,
@@ -331,12 +325,7 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
   }
   lines.push("");
   lines.push("Derived summary:");
-  lines.push("note: feishu.eventAge is reported separately and excluded from local E2E.");
-  for (const name of [
-    "e2e_local_first_visible_ms",
-    "e2e_local_complete_ms",
-    "feishu_event_age_ms",
-  ]) {
+  for (const name of ["e2e_local_first_visible_ms", "e2e_local_complete_ms"]) {
     const summary = report.series[name];
     if (!summary) {
       continue;
@@ -348,11 +337,7 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
   lines.push("");
   lines.push("Series summary (avg/p95/p99):");
   for (const [name, summary] of Object.entries(report.series)) {
-    if (
-      name === "e2e_local_first_visible_ms" ||
-      name === "e2e_local_complete_ms" ||
-      name === "feishu_event_age_ms"
-    ) {
+    if (name === "e2e_local_first_visible_ms" || name === "e2e_local_complete_ms") {
       continue;
     }
     const formatter = isCountSeries(name) ? formatCount : formatMs;
