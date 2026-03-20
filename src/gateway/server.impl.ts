@@ -29,6 +29,7 @@ import {
 import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { logAcceptedEnvOption } from "../infra/env.js";
 import { createExecApprovalForwarder } from "../infra/exec-approval-forwarder.js";
+import { isHardwareTraceEnabled, startHardwareTrace } from "../infra/hardware-trace.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
 import { startHeartbeatRunner, type HeartbeatRunner } from "../infra/heartbeat-runner.js";
 import {
@@ -379,6 +380,9 @@ export async function startGatewayServer(
   }
   if (diagnosticsEnabled || isLatencyTracePersistEnabled(cfgAtStart)) {
     startLatencyTracePersist(cfgAtStart);
+  }
+  if (diagnosticsEnabled || isHardwareTraceEnabled(cfgAtStart)) {
+    startHardwareTrace(cfgAtStart);
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(

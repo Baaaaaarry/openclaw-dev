@@ -567,6 +567,10 @@ export function createOllamaStreamFn(
           loadMs,
           promptEvalMs,
           evalMs,
+          inputTokens: finalResponse.prompt_eval_count,
+          outputTokens: finalResponse.eval_count,
+          totalTokens:
+            (finalResponse.prompt_eval_count ?? 0) + (finalResponse.eval_count ?? 0) || undefined,
           promptEvalCount: finalResponse.prompt_eval_count,
           evalCount: finalResponse.eval_count,
         });

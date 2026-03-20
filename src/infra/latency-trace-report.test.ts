@@ -64,6 +64,8 @@ describe("latency-trace-report", () => {
           loadMs: 20,
           promptEvalMs: 100,
           evalMs: 180,
+          promptEvalCount: 20,
+          evalCount: 12,
           channel: "feishu",
           accountId: "main",
           chatId: "oc_chat",
@@ -88,6 +90,8 @@ describe("latency-trace-report", () => {
           loadMs: 10,
           promptEvalMs: 30,
           evalMs: 80,
+          promptEvalCount: 10,
+          evalCount: 8,
           channel: "feishu",
           accountId: "main",
           chatId: "oc_chat",
@@ -124,6 +128,11 @@ describe("latency-trace-report", () => {
     expect(report.messages[0]?.t5LlmCallCount).toBe(2);
     expect(report.messages[0]?.t5LlmTotalMs).toBe(420);
     expect(report.messages[0]?.t5LlmLoadMs).toBe(30);
+    expect(report.messages[0]?.t5InputTokens).toBe(30);
+    expect(report.messages[0]?.t5OutputTokens).toBe(20);
+    expect(report.messages[0]?.t5TotalTokens).toBe(50);
+    expect(report.messages[0]?.t5PrefillTokensPerSec).toBe(230.76923076923077);
+    expect(report.messages[0]?.t5DecodeTokensPerSec).toBe(76.92307692307692);
     expect(report.messages[0]?.localFirstVisibleMs).toBe(10 + 5 + 6 + 7 + 80 + 45);
     expect(report.messages[0]?.t6FeishuFinalAckMs).toBe(55);
     expect(report.messages[0]?.localCompleteMs).toBe(10 + 5 + 6 + 7 + 420 + 55);
@@ -150,6 +159,92 @@ describe("latency-trace-report", () => {
     expect(text).toContain("T2=12.0ms");
     expect(text).toContain("t5_llm_call_count");
     expect(text).toContain("t2_gateway_enqueue_ms");
+  });
+
+  it("correlates hardware samples during the llm window", () => {
+    const report = summarizeLatencyRecords(
+      parseLatencyTraceJsonl(
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "ttft",
+            durationMs: 100,
+            startedAtMs: 1_000,
+            endedAtMs: 1_100,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "completed",
+            durationMs: 400,
+            totalMs: 400,
+            startedAtMs: 1_000,
+            endedAtMs: 1_400,
+            inputTokens: 100,
+            outputTokens: 20,
+            totalTokens: 120,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_1",
+          }),
+        ].join("\n"),
+      ),
+      [
+        {
+          ts: "2026-01-01T00:00:01.050Z",
+          epochMs: 1_050,
+          cpuUtilPct: 40,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 40,
+          memUsedBytes: 60,
+          memUtilPct: 60,
+          gpus: [
+            {
+              index: 0,
+              utilizationGpuPct: 80,
+              memoryUsedMiB: 10,
+              memoryTotalMiB: 20,
+              powerDrawW: 100,
+            },
+          ],
+        },
+        {
+          ts: "2026-01-01T00:00:01.350Z",
+          epochMs: 1_350,
+          cpuUtilPct: 60,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 20,
+          memUsedBytes: 80,
+          memUtilPct: 80,
+          gpus: [
+            {
+              index: 0,
+              utilizationGpuPct: 60,
+              memoryUsedMiB: 12,
+              memoryTotalMiB: 20,
+              powerDrawW: 120,
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(report.messages[0]?.hardwareSampleCount).toBe(2);
+    expect(report.messages[0]?.hardwareCpuUtilAvgPct).toBe(50);
+    expect(report.messages[0]?.hardwareMemUtilAvgPct).toBe(70);
+    expect(report.messages[0]?.hardwareGpuUtilAvgPct).toBe(70);
+    expect(report.messages[0]?.hardwareGpuMemUtilAvgPct).toBe(55);
+    expect(report.messages[0]?.hardwareGpuPowerAvgW).toBe(110);
   });
 
   it("merges records with the same message id across differing chat id representations", () => {

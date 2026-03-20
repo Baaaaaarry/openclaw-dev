@@ -1,5 +1,6 @@
 import path from "node:path";
 import { resolveStateDir } from "../src/config/paths.js";
+import { readHardwareTraceJsonl } from "../src/infra/hardware-trace.js";
 import {
   filterLastRecords,
   formatLatencyReportText,
@@ -9,6 +10,7 @@ import {
 
 type Options = {
   file: string;
+  hardwareFile?: string;
   last?: number;
   json: boolean;
 };
@@ -33,6 +35,11 @@ function parseArgs(argv: string[]): Options {
       index += 1;
       continue;
     }
+    if (arg === "--hardware-file" && argv[index + 1]) {
+      options.hardwareFile = argv[index + 1]!;
+      index += 1;
+      continue;
+    }
     if (arg === "--json") {
       options.json = true;
     }
@@ -43,7 +50,10 @@ function parseArgs(argv: string[]): Options {
 function main(): void {
   const options = parseArgs(process.argv.slice(2));
   const records = filterLastRecords(readLatencyTraceJsonl(options.file), options.last);
-  const report = summarizeLatencyRecords(records);
+  const hardwareSamples = options.hardwareFile
+    ? readHardwareTraceJsonl(options.hardwareFile)
+    : undefined;
+  const report = summarizeLatencyRecords(records, hardwareSamples);
   if (options.json) {
     console.log(JSON.stringify(report, null, 2));
     return;

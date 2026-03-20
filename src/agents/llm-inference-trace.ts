@@ -7,6 +7,50 @@ type LlmInferenceTrace = DiagnosticTraceIdentity & {
   transport?: string;
 };
 
+type UsageLike = {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  total?: number;
+  totalTokens?: number;
+};
+
+function normalizeUsage(value: unknown): UsageLike | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const usage = value as UsageLike;
+  const input = typeof usage.input === "number" ? usage.input : undefined;
+  const output = typeof usage.output === "number" ? usage.output : undefined;
+  const cacheRead = typeof usage.cacheRead === "number" ? usage.cacheRead : undefined;
+  const cacheWrite = typeof usage.cacheWrite === "number" ? usage.cacheWrite : undefined;
+  const total =
+    typeof usage.total === "number"
+      ? usage.total
+      : typeof usage.totalTokens === "number"
+        ? usage.totalTokens
+        : undefined;
+  if (
+    input === undefined &&
+    output === undefined &&
+    cacheRead === undefined &&
+    cacheWrite === undefined &&
+    total === undefined
+  ) {
+    return undefined;
+  }
+  return { input, output, cacheRead, cacheWrite, total };
+}
+
+function extractMessageUsage(value: unknown): UsageLike | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const record = value as { usage?: unknown; message?: { usage?: unknown } };
+  return normalizeUsage(record.usage) ?? normalizeUsage(record.message?.usage);
+}
+
 function wrapLlmInferenceTrace(
   stream: ReturnType<typeof streamSimple>,
   params: {
@@ -44,7 +88,7 @@ function wrapLlmInferenceTrace(
     });
   };
 
-  const recordTotal = (endedAtMs: number) => {
+  const recordTotal = (endedAtMs: number, usage?: UsageLike) => {
     if (totalLogged) {
       return;
     }
@@ -68,13 +112,24 @@ function wrapLlmInferenceTrace(
       transport: params.trace.transport,
       totalMs,
       ttftMs: firstChunkAt ? firstChunkAt - params.requestStartedAt : undefined,
+      inputTokens: usage?.input,
+      outputTokens: usage?.output,
+      cacheReadTokens: usage?.cacheRead,
+      cacheWriteTokens: usage?.cacheWrite,
+      totalTokens:
+        usage?.total ??
+        ((usage?.input ?? 0) +
+          (usage?.output ?? 0) +
+          (usage?.cacheRead ?? 0) +
+          (usage?.cacheWrite ?? 0) ||
+          undefined),
     });
   };
 
   const originalResult = stream.result.bind(stream);
   stream.result = async () => {
     const result = await originalResult();
-    recordTotal(Date.now());
+    recordTotal(Date.now(), extractMessageUsage(result));
     return result;
   };
 
@@ -86,7 +141,17 @@ function wrapLlmInferenceTrace(
         async next() {
           const result = await iterator.next();
           if (!result.done) {
+            const event = result.value as
+              | {
+                  type?: string;
+                  message?: unknown;
+                  error?: unknown;
+                }
+              | undefined;
             recordTtft(Date.now());
+            if (event?.type === "done") {
+              recordTotal(Date.now(), extractMessageUsage(event.message));
+            }
           } else {
             recordTotal(Date.now());
           }

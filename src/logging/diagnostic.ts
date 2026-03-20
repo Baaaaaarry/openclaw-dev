@@ -275,6 +275,11 @@ export function logLatencySegment(
     loadMs?: number;
     promptEvalMs?: number;
     evalMs?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    totalTokens?: number;
     promptEvalCount?: number;
     evalCount?: number;
   },
@@ -301,6 +306,15 @@ export function logLatencySegment(
       : undefined,
     typeof params.evalMs === "number" ? `decodeMs=${Math.round(params.evalMs)}` : undefined,
     typeof params.ttftMs === "number" ? `ttftMs=${Math.round(params.ttftMs)}` : undefined,
+    typeof params.inputTokens === "number"
+      ? `inputTokens=${Math.round(params.inputTokens)}`
+      : undefined,
+    typeof params.outputTokens === "number"
+      ? `outputTokens=${Math.round(params.outputTokens)}`
+      : undefined,
+    typeof params.totalTokens === "number"
+      ? `totalTokens=${Math.round(params.totalTokens)}`
+      : undefined,
   ]
     .filter(Boolean)
     .join(" ");

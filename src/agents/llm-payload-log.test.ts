@@ -68,8 +68,14 @@ describe("createLlmPayloadLogger", () => {
     const resolved = await stream;
     await resolved?.result();
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    const content = await fs.readFile(file, "utf8");
+    let content = "";
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      content = await fs.readFile(file, "utf8");
+      if (content.includes('"stage":"response"')) {
+        break;
+      }
+    }
     expect(content).toContain('"stage":"request"');
     expect(content).toContain('"stage":"response"');
     expect(content).toContain('"provider":"openai"');
