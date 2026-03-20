@@ -7,6 +7,7 @@ export type DiagnosticLatencySegment =
   | "t2_gateway_enqueue"
   | "t3_worker_queue_wait"
   | "t4_agent_preprocess"
+  | "t5_llm_inference"
   | "t5_ollama_inference"
   | "t6_feishu_return";
 

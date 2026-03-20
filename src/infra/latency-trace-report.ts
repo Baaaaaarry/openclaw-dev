@@ -22,13 +22,13 @@ export type LatencyMessageSummary = {
   t2GatewayEnqueueMs?: number;
   t3WorkerQueueWaitMs?: number;
   t4AgentPreprocessMs?: number;
-  t5OllamaCallCount?: number;
-  t5OllamaTtftMs?: number;
-  t5OllamaTtftSumMs?: number;
-  t5OllamaTotalMs?: number;
-  t5OllamaLoadMs?: number;
-  t5OllamaPrefillMs?: number;
-  t5OllamaDecodeMs?: number;
+  t5LlmCallCount?: number;
+  t5LlmTtftMs?: number;
+  t5LlmTtftSumMs?: number;
+  t5LlmTotalMs?: number;
+  t5LlmLoadMs?: number;
+  t5LlmPrefillMs?: number;
+  t5LlmDecodeMs?: number;
   t6FeishuFirstAckMs?: number;
   t6FeishuFinalAckMs?: number;
   localFirstVisibleMs?: number;
@@ -99,7 +99,7 @@ function recalculateDerived(summary: LatencyMessageSummary): void {
     summary.t2GatewayEnqueueMs,
     summary.t3WorkerQueueWaitMs,
     summary.t4AgentPreprocessMs,
-    summary.t5OllamaTtftMs,
+    summary.t5LlmTtftMs,
     summary.t6FeishuFirstAckMs,
   ];
   if (firstVisibleParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
@@ -114,7 +114,7 @@ function recalculateDerived(summary: LatencyMessageSummary): void {
     summary.t2GatewayEnqueueMs,
     summary.t3WorkerQueueWaitMs,
     summary.t4AgentPreprocessMs,
-    summary.t5OllamaTotalMs,
+    summary.t5LlmTotalMs,
     summary.t6FeishuFinalAckMs,
   ];
   if (completeParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
@@ -136,30 +136,25 @@ function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySe
     case "t4_agent_preprocess":
       summary.t4AgentPreprocessMs = record.durationMs;
       return;
+    case "t5_llm_inference":
     case "t5_ollama_inference":
       if (record.stage === "ttft") {
-        summary.t5OllamaTtftMs ??= record.durationMs;
-        summary.t5OllamaTtftSumMs = addMaybeNumber(summary.t5OllamaTtftSumMs, record.durationMs);
+        summary.t5LlmTtftMs ??= record.durationMs;
+        summary.t5LlmTtftSumMs = addMaybeNumber(summary.t5LlmTtftSumMs, record.durationMs);
         return;
       }
-      summary.t5OllamaCallCount = (summary.t5OllamaCallCount ?? 0) + 1;
-      summary.t5OllamaTotalMs = addMaybeNumber(
-        summary.t5OllamaTotalMs,
+      summary.t5LlmCallCount = (summary.t5LlmCallCount ?? 0) + 1;
+      summary.t5LlmTotalMs = addMaybeNumber(
+        summary.t5LlmTotalMs,
         record.totalMs ?? record.durationMs,
       );
-      summary.t5OllamaLoadMs = addMaybeNumber(
-        summary.t5OllamaLoadMs,
-        toFiniteNumber(record.loadMs),
-      );
-      summary.t5OllamaPrefillMs = addMaybeNumber(
-        summary.t5OllamaPrefillMs,
+      summary.t5LlmLoadMs = addMaybeNumber(summary.t5LlmLoadMs, toFiniteNumber(record.loadMs));
+      summary.t5LlmPrefillMs = addMaybeNumber(
+        summary.t5LlmPrefillMs,
         toFiniteNumber(record.promptEvalMs),
       );
-      summary.t5OllamaDecodeMs = addMaybeNumber(
-        summary.t5OllamaDecodeMs,
-        toFiniteNumber(record.evalMs),
-      );
-      summary.t5OllamaTtftMs = summary.t5OllamaTtftMs ?? toFiniteNumber(record.ttftMs);
+      summary.t5LlmDecodeMs = addMaybeNumber(summary.t5LlmDecodeMs, toFiniteNumber(record.evalMs));
+      summary.t5LlmTtftMs = summary.t5LlmTtftMs ?? toFiniteNumber(record.ttftMs);
       return;
     case "t6_feishu_return":
       if (record.stage === "first_ack") {
@@ -251,13 +246,13 @@ function buildSeriesSummary(messages: LatencyMessageSummary[]): Record<string, S
     ["t2GatewayEnqueueMs", "t2_gateway_enqueue_ms"],
     ["t3WorkerQueueWaitMs", "t3_worker_queue_wait_ms"],
     ["t4AgentPreprocessMs", "t4_agent_preprocess_ms"],
-    ["t5OllamaCallCount", "t5_ollama_call_count"],
-    ["t5OllamaTtftMs", "t5_ollama_ttft_ms"],
-    ["t5OllamaTtftSumMs", "t5_ollama_ttft_sum_ms"],
-    ["t5OllamaTotalMs", "t5_ollama_total_ms"],
-    ["t5OllamaLoadMs", "t5_ollama_load_ms"],
-    ["t5OllamaPrefillMs", "t5_ollama_prefill_ms"],
-    ["t5OllamaDecodeMs", "t5_ollama_decode_ms"],
+    ["t5LlmCallCount", "t5_llm_call_count"],
+    ["t5LlmTtftMs", "t5_llm_ttft_ms"],
+    ["t5LlmTtftSumMs", "t5_llm_ttft_sum_ms"],
+    ["t5LlmTotalMs", "t5_llm_total_ms"],
+    ["t5LlmLoadMs", "t5_llm_load_ms"],
+    ["t5LlmPrefillMs", "t5_llm_prefill_ms"],
+    ["t5LlmDecodeMs", "t5_llm_decode_ms"],
     ["t6FeishuFirstAckMs", "t6_feishu_first_ack_ms"],
     ["t6FeishuFinalAckMs", "t6_feishu_final_ack_ms"],
     ["localFirstVisibleMs", "e2e_local_first_visible_ms"],
@@ -307,13 +302,13 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
         `T2=${formatMs(message.t2GatewayEnqueueMs)}`,
         `T3=${formatMs(message.t3WorkerQueueWaitMs)}`,
         `T4=${formatMs(message.t4AgentPreprocessMs)}`,
-        `T5.calls=${formatCount(message.t5OllamaCallCount)}`,
-        `T5.ttft.first=${formatMs(message.t5OllamaTtftMs)}`,
-        `T5.ttft.sum=${formatMs(message.t5OllamaTtftSumMs)}`,
-        `T5.total.sum=${formatMs(message.t5OllamaTotalMs)}`,
-        `T5.load.sum=${formatMs(message.t5OllamaLoadMs)}`,
-        `T5.prefill.sum=${formatMs(message.t5OllamaPrefillMs)}`,
-        `T5.decode.sum=${formatMs(message.t5OllamaDecodeMs)}`,
+        `T5.calls=${formatCount(message.t5LlmCallCount)}`,
+        `T5.ttft.first=${formatMs(message.t5LlmTtftMs)}`,
+        `T5.ttft.sum=${formatMs(message.t5LlmTtftSumMs)}`,
+        `T5.total.sum=${formatMs(message.t5LlmTotalMs)}`,
+        `T5.load.sum=${formatMs(message.t5LlmLoadMs)}`,
+        `T5.prefill.sum=${formatMs(message.t5LlmPrefillMs)}`,
+        `T5.decode.sum=${formatMs(message.t5LlmDecodeMs)}`,
         `T6.first=${formatMs(message.t6FeishuFirstAckMs)}`,
         `T6.final=${formatMs(message.t6FeishuFinalAckMs)}`,
         `E2E.local.first=${formatMs(message.localFirstVisibleMs)}`,

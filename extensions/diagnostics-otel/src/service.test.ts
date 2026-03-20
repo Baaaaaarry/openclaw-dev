@@ -239,7 +239,7 @@ describe("diagnostics-otel service", () => {
     });
     emitDiagnosticEvent({
       type: "latency.segment",
-      segment: "t5_ollama_inference",
+      segment: "t5_llm_inference",
       stage: "native",
       durationMs: 90,
       channel: "feishu",
@@ -267,7 +267,7 @@ describe("diagnostics-otel service", () => {
     ).toHaveBeenCalledWith(
       90,
       expect.objectContaining({
-        "openclaw.segment": "t5_ollama_inference",
+        "openclaw.segment": "t5_llm_inference",
       }),
     );
 
