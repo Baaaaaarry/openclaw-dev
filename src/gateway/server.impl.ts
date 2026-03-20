@@ -24,6 +24,7 @@ import {
   setDiagnosticsEnabledForProcess,
 } from "../infra/diagnostic-events.js";
 import { isTruthyEnvValue, isVitestRuntimeEnv, logAcceptedEnvOption } from "../infra/env.js";
+import { isHardwareTraceEnabled, startHardwareTrace } from "../infra/hardware-trace.js";
 import {
   isLatencyTracePersistEnabled,
   startLatencyTracePersist,
@@ -316,6 +317,9 @@ export async function startGatewayServer(
   }
   if (diagnosticsEnabled || isLatencyTracePersistEnabled(cfgAtStart)) {
     startLatencyTracePersist(cfgAtStart);
+  }
+  if (diagnosticsEnabled || isHardwareTraceEnabled(cfgAtStart)) {
+    startHardwareTrace(cfgAtStart);
   }
   setGatewaySigusr1RestartPolicy({ allowExternal: isRestartEnabled(cfgAtStart) });
   setPreRestartDeferralCheck(

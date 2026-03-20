@@ -149,6 +149,11 @@ export type DiagnosticLatencySegmentEvent = DiagnosticBaseEvent &
     loadMs?: number;
     promptEvalMs?: number;
     evalMs?: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    totalTokens?: number;
     promptEvalCount?: number;
     evalCount?: number;
   };

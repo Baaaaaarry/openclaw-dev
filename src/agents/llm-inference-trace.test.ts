@@ -14,6 +14,11 @@ function createMockStream() {
   const message = {
     role: "assistant" as const,
     content: [{ type: "text" as const, text: "ok" }],
+    usage: {
+      input: 120,
+      output: 30,
+      totalTokens: 150,
+    },
   };
   return {
     async result() {
@@ -25,7 +30,7 @@ function createMockStream() {
         async next() {
           step += 1;
           if (step === 1) {
-            return { done: false as const, value: { partial: message } };
+            return { done: false as const, value: { type: "done", message } };
           }
           return { done: true as const, value: undefined };
         },
@@ -70,6 +75,9 @@ describe("wrapStreamFnLlmInference", () => {
         provider: "openai",
         model: "gpt-5.4",
         runId: "run-1",
+        inputTokens: 120,
+        outputTokens: 30,
+        totalTokens: 150,
       }),
     );
   });
