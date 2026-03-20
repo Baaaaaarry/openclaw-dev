@@ -47,7 +47,7 @@ describe("latency-trace-report", () => {
         }),
         JSON.stringify({
           type: "latency.segment",
-          segment: "t5_ollama_inference",
+          segment: "t5_llm_inference",
           stage: "ttft",
           durationMs: 80,
           channel: "feishu",
@@ -57,7 +57,7 @@ describe("latency-trace-report", () => {
         }),
         JSON.stringify({
           type: "latency.segment",
-          segment: "t5_ollama_inference",
+          segment: "t5_llm_inference",
           stage: "native",
           durationMs: 300,
           totalMs: 300,
@@ -71,7 +71,7 @@ describe("latency-trace-report", () => {
         }),
         JSON.stringify({
           type: "latency.segment",
-          segment: "t5_ollama_inference",
+          segment: "t5_llm_inference",
           stage: "ttft",
           durationMs: 40,
           channel: "feishu",
@@ -81,7 +81,7 @@ describe("latency-trace-report", () => {
         }),
         JSON.stringify({
           type: "latency.segment",
-          segment: "t5_ollama_inference",
+          segment: "t5_llm_inference",
           stage: "native",
           durationMs: 120,
           totalMs: 120,
@@ -119,15 +119,15 @@ describe("latency-trace-report", () => {
     const report = summarizeLatencyRecords(records);
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.t1FeishuInboundMs).toBe(10);
-    expect(report.messages[0]?.t5OllamaTtftMs).toBe(80);
-    expect(report.messages[0]?.t5OllamaTtftSumMs).toBe(120);
-    expect(report.messages[0]?.t5OllamaCallCount).toBe(2);
-    expect(report.messages[0]?.t5OllamaTotalMs).toBe(420);
-    expect(report.messages[0]?.t5OllamaLoadMs).toBe(30);
+    expect(report.messages[0]?.t5LlmTtftMs).toBe(80);
+    expect(report.messages[0]?.t5LlmTtftSumMs).toBe(120);
+    expect(report.messages[0]?.t5LlmCallCount).toBe(2);
+    expect(report.messages[0]?.t5LlmTotalMs).toBe(420);
+    expect(report.messages[0]?.t5LlmLoadMs).toBe(30);
     expect(report.messages[0]?.localFirstVisibleMs).toBe(10 + 5 + 6 + 7 + 80 + 45);
     expect(report.messages[0]?.t6FeishuFinalAckMs).toBe(55);
     expect(report.messages[0]?.localCompleteMs).toBe(10 + 5 + 6 + 7 + 420 + 55);
-    expect(report.series.t5_ollama_total_ms?.avg).toBe(420);
+    expect(report.series.t5_llm_total_ms?.avg).toBe(420);
   });
 
   it("formats a readable report", () => {
@@ -148,7 +148,7 @@ describe("latency-trace-report", () => {
     expect(text).toContain("Per-message Summary:");
     expect(text).toContain("Derived summary:");
     expect(text).toContain("T2=12.0ms");
-    expect(text).toContain("t5_ollama_call_count");
+    expect(text).toContain("t5_llm_call_count");
     expect(text).toContain("t2_gateway_enqueue_ms");
   });
 
@@ -178,7 +178,7 @@ describe("latency-trace-report", () => {
           }),
           JSON.stringify({
             type: "latency.segment",
-            segment: "t5_ollama_inference",
+            segment: "t5_llm_inference",
             stage: "native",
             durationMs: 300,
             totalMs: 300,
@@ -195,7 +195,7 @@ describe("latency-trace-report", () => {
     expect(report.messages).toHaveLength(1);
     expect(report.messages[0]?.t1FeishuInboundMs).toBe(1200);
     expect(report.messages[0]?.t2GatewayEnqueueMs).toBe(20);
-    expect(report.messages[0]?.t5OllamaCallCount).toBe(1);
-    expect(report.messages[0]?.t5OllamaTotalMs).toBe(300);
+    expect(report.messages[0]?.t5LlmCallCount).toBe(1);
+    expect(report.messages[0]?.t5LlmTotalMs).toBe(300);
   });
 });

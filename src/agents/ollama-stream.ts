@@ -12,7 +12,7 @@ import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import type { DiagnosticTraceIdentity } from "../infra/latency-trace.js";
 import { logLatencySegment } from "../logging/diagnostic.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import type { OllamaPayloadLogger } from "./ollama-payload-log.js";
+import type { LlmPayloadLogger } from "./llm-payload-log.js";
 
 const log = createSubsystemLogger("ollama-stream");
 
@@ -424,7 +424,7 @@ function toFiniteMs(value: unknown): number | undefined {
 export function createOllamaStreamFn(
   baseUrl: string,
   trace?: DiagnosticTraceIdentity,
-  payloadLogger?: Pick<OllamaPayloadLogger, "recordRequest" | "recordResponse" | "recordError">,
+  payloadLogger?: Pick<LlmPayloadLogger, "recordRequest" | "recordResponse" | "recordError">,
 ): StreamFn {
   const chatUrl = resolveOllamaChatUrl(baseUrl);
 
@@ -494,7 +494,7 @@ export function createOllamaStreamFn(
           if (firstChunkAt === undefined) {
             firstChunkAt = Date.now();
             logLatencySegment({
-              segment: "t5_ollama_inference",
+              segment: "t5_llm_inference",
               stage: "ttft",
               durationMs: firstChunkAt - requestStartedAt,
               startedAtMs: requestStartedAt,
@@ -547,7 +547,7 @@ export function createOllamaStreamFn(
         payloadLogger?.recordResponse(finalResponse);
 
         logLatencySegment({
-          segment: "t5_ollama_inference",
+          segment: "t5_llm_inference",
           stage: "native",
           durationMs: totalMs,
           startedAtMs: requestStartedAt,

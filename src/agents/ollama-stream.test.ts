@@ -368,14 +368,14 @@ describe("createOllamaStreamFn", () => {
 
     expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
       expect.objectContaining({
-        segment: "t5_ollama_inference",
+        segment: "t5_llm_inference",
         stage: "ttft",
         runId: "run-1",
       }),
     );
     expect(diagnosticMocks.logLatencySegment).toHaveBeenCalledWith(
       expect.objectContaining({
-        segment: "t5_ollama_inference",
+        segment: "t5_llm_inference",
         stage: "native",
         totalMs: 90,
         loadMs: 10,

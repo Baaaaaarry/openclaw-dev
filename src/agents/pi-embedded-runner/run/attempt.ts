@@ -40,6 +40,8 @@ import { DEFAULT_CONTEXT_TOKENS } from "../../defaults.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
+import { wrapStreamFnLlmInference } from "../../llm-inference-trace.js";
+import { createLlmPayloadLogger } from "../../llm-payload-log.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaPayloadLogger } from "../../ollama-payload-log.js";
@@ -857,38 +859,51 @@ export async function runEmbeddedAttempt(
         modelApi: params.model.api,
         workspaceDir: params.workspaceDir,
       });
+      const providerConfig = params.config?.models?.providers?.[params.model.provider];
+      const modelBaseUrl =
+        typeof params.model.baseUrl === "string" ? params.model.baseUrl.trim() : "";
+      const providerBaseUrl =
+        typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl.trim() : "";
+      const llmBaseUrl = modelBaseUrl || providerBaseUrl || undefined;
+      const llmTransport =
+        params.model.api === "ollama"
+          ? "ollama-api-chat"
+          : `${String(params.model.api ?? "sdk")}-stream`;
+      const llmTrace = {
+        channel: params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
+        accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
+        chatId: params.latencyTrace?.chatId ?? params.messageTo,
+        messageId: params.latencyTrace?.messageId ?? params.currentMessageId,
+        sessionKey: params.latencyTrace?.sessionKey ?? params.sessionKey,
+        sessionId: params.latencyTrace?.sessionId ?? params.sessionId,
+        runId: params.latencyTrace?.runId ?? params.runId,
+        provider: params.provider,
+        model: params.modelId,
+      };
+      const llmPayloadLogger = createLlmPayloadLogger({
+        env: process.env,
+        trace: llmTrace,
+        provider: params.provider,
+        modelApi: params.model.api,
+        baseUrl: llmBaseUrl,
+        requestUrl: llmBaseUrl,
+        transport: llmTransport,
+      });
 
       // Ollama native API: bypass SDK's streamSimple and use direct /api/chat calls
       // for reliable streaming + tool calling support (#11828).
       if (params.model.api === "ollama") {
-        // Use the resolved model baseUrl first so custom provider aliases work.
-        const providerConfig = params.config?.models?.providers?.[params.model.provider];
-        const modelBaseUrl =
-          typeof params.model.baseUrl === "string" ? params.model.baseUrl.trim() : "";
-        const providerBaseUrl =
-          typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl.trim() : "";
-        const ollamaBaseUrl = modelBaseUrl || providerBaseUrl || OLLAMA_NATIVE_BASE_URL;
-        const ollamaTrace = {
-          channel: params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
-          accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
-          chatId: params.latencyTrace?.chatId ?? params.messageTo,
-          messageId: params.latencyTrace?.messageId ?? params.currentMessageId,
-          sessionKey: params.latencyTrace?.sessionKey ?? params.sessionKey,
-          sessionId: params.latencyTrace?.sessionId ?? params.sessionId,
-          runId: params.latencyTrace?.runId ?? params.runId,
-          provider: params.provider,
-          model: params.modelId,
-        };
+        const ollamaBaseUrl = llmBaseUrl || OLLAMA_NATIVE_BASE_URL;
         const ollamaPayloadLogger = createOllamaPayloadLogger({
           env: process.env,
           baseUrl: ollamaBaseUrl,
           chatUrl: `${ollamaBaseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "") || OLLAMA_NATIVE_BASE_URL}/api/chat`,
-          trace: ollamaTrace,
+          trace: llmTrace,
         });
         activeSession.agent.streamFn = createOllamaStreamFn(
           ollamaBaseUrl,
           {
-            ...ollamaTrace,
+            ...llmTrace,
           },
           ollamaPayloadLogger ?? undefined,
         );
@@ -995,6 +1010,15 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
           activeSession.agent.streamFn,
         );
+      }
+      if (llmPayloadLogger && params.model.api !== "ollama") {
+        activeSession.agent.streamFn = llmPayloadLogger.wrapStreamFn(activeSession.agent.streamFn);
+      }
+      if (params.model.api !== "ollama") {
+        activeSession.agent.streamFn = wrapStreamFnLlmInference(activeSession.agent.streamFn, {
+          ...llmTrace,
+          transport: llmTransport,
+        });
       }
 
       try {
