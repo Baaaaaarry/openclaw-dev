@@ -47,11 +47,28 @@ describe("latency-trace-visualize", () => {
       },
     };
 
-    const html = renderLatencyReportHtml(report);
+    const html = renderLatencyReportHtml({
+      report,
+      hardwareSamples: [],
+    });
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("OpenClaw Latency Dashboard");
     expect(html).toContain("Per-message Timeline");
     expect(html).toContain("msg1");
-    expect(html).toContain("E2E Complete Avg");
+    expect(html).toContain("Per-message Metrics Table");
+    expect(html).not.toContain("Aggregate Summary");
+  });
+
+  it("renders aggregate summary when avg mode is enabled", () => {
+    const report: LatencyAggregateReport = {
+      recordsScanned: 1,
+      messages: [],
+      series: {
+        e2e_local_first_visible_ms: { count: 1, avg: 260, p95: 260, p99: 260 },
+        e2e_local_complete_ms: { count: 1, avg: 670, p95: 670, p99: 670 },
+      },
+    };
+    const html = renderLatencyReportHtml({ report, avgMode: true });
+    expect(html).toContain("Aggregate Summary");
   });
 });
