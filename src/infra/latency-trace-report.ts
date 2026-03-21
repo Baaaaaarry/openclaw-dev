@@ -397,7 +397,9 @@ function correlateHardwareSamples(
             typeof gpu.memoryTotalMiB === "number" &&
             gpu.memoryTotalMiB > 0
               ? (gpu.memoryUsedMiB / gpu.memoryTotalMiB) * 100
-              : undefined,
+              : typeof gpu.utilizationMemPct === "number" && Number.isFinite(gpu.utilizationMemPct)
+                ? gpu.utilizationMemPct
+                : undefined,
           )
           .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
           .reduce<number | undefined>(
