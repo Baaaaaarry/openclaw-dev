@@ -247,6 +247,57 @@ describe("latency-trace-report", () => {
     expect(report.messages[0]?.hardwareGpuPowerAvgW).toBe(110);
   });
 
+  it("falls back to utilization.memory when gpu memory totals are unavailable", () => {
+    const report = summarizeLatencyRecords(
+      parseLatencyTraceJsonl(
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "ttft",
+            durationMs: 100,
+            startedAtMs: 1_000,
+            endedAtMs: 1_100,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "completed",
+            durationMs: 400,
+            totalMs: 400,
+            startedAtMs: 1_000,
+            endedAtMs: 1_400,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_1",
+          }),
+        ].join("\n"),
+      ),
+      [
+        {
+          ts: "2026-01-01T00:00:01.050Z",
+          epochMs: 1_050,
+          memTotalBytes: 100,
+          memFreeBytes: 40,
+          memUsedBytes: 60,
+          memUtilPct: 60,
+          gpus: [
+            {
+              index: 0,
+              utilizationGpuPct: 80,
+              utilizationMemPct: 62,
+            },
+          ],
+        },
+      ],
+    );
+
+    expect(report.messages[0]?.hardwareGpuMemUtilAvgPct).toBe(62);
+  });
+
   it("merges records with the same message id across differing chat id representations", () => {
     const report = summarizeLatencyRecords(
       parseLatencyTraceJsonl(
