@@ -14,6 +14,7 @@ type Options = {
   hardwareFile?: string;
   out: string;
   last?: number;
+  avg: boolean;
 };
 
 function parseArgs(argv: string[]): Options {
@@ -21,6 +22,7 @@ function parseArgs(argv: string[]): Options {
   const options: Options = {
     file: path.join(defaultLogsDir, "latency-segments.jsonl"),
     out: path.join(defaultLogsDir, "latency-dashboard.html"),
+    avg: false,
   };
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -45,6 +47,10 @@ function parseArgs(argv: string[]): Options {
         options.last = Math.floor(parsed);
       }
       index += 1;
+      continue;
+    }
+    if (arg === "--avg") {
+      options.avg = true;
     }
   }
   return options;
@@ -57,7 +63,11 @@ function main(): void {
     ? readHardwareTraceJsonl(options.hardwareFile)
     : undefined;
   const report = summarizeLatencyRecords(records, hardwareSamples);
-  const html = renderLatencyReportHtml(report);
+  const html = renderLatencyReportHtml({
+    report,
+    hardwareSamples,
+    avgMode: options.avg,
+  });
   fs.mkdirSync(path.dirname(options.out), { recursive: true });
   fs.writeFileSync(options.out, html, "utf8");
   console.log(options.out);

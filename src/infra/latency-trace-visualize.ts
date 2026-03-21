@@ -1,4 +1,24 @@
+import type { HardwareTraceSample } from "./hardware-trace.js";
 import type { LatencyAggregateReport, LatencyMessageSummary } from "./latency-trace-report.js";
+
+type RenderLatencyReportHtmlOptions = {
+  report: LatencyAggregateReport;
+  hardwareSamples?: HardwareTraceSample[];
+  avgMode?: boolean;
+};
+
+type StageBar = {
+  label: string;
+  value?: number;
+  color: string;
+};
+
+type ChartMetric = {
+  id: string;
+  title: string;
+  unit: string;
+  points: Array<{ x: number; y?: number }>;
+};
 
 function escapeHtml(value: string): string {
   return value
@@ -9,32 +29,78 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function safeJson(value: unknown): string {
+  return JSON.stringify(value).replaceAll("<", "\\u003c");
+}
+
+function csvEscape(value: unknown): string {
+  const text =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+        ? String(value)
+        : value == null
+          ? ""
+          : JSON.stringify(value);
+  if (text.includes(",") || text.includes('"') || text.includes("\n")) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+  return text;
+}
+
 function formatMs(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "-";
+    return "N/A";
   }
   return `${value.toFixed(1)} ms`;
 }
 
 function formatPct(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "-";
+    return "N/A";
   }
   return `${value.toFixed(1)}%`;
 }
 
 function formatCount(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "-";
+    return "N/A";
   }
   return String(Math.round(value));
 }
 
 function formatWatts(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "-";
+    return "N/A";
   }
   return `${value.toFixed(1)} W`;
+}
+
+function formatMiB(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+  return `${value.toFixed(1)} MiB`;
+}
+
+function formatUnit(unit: string, value: number | undefined): string {
+  switch (unit) {
+    case "ms":
+      return formatMs(value);
+    case "%":
+      return formatPct(value);
+    case "W":
+      return formatWatts(value);
+    case "MiB":
+      return formatMiB(value);
+    case "count":
+      return formatCount(value);
+    default:
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return "N/A";
+      }
+      return `${value.toFixed(1)} ${unit}`;
+  }
 }
 
 function ratioPercent(value: number | undefined, total: number | undefined): number {
@@ -50,12 +116,6 @@ function ratioPercent(value: number | undefined, total: number | undefined): num
   }
   return Math.max(0, Math.min(100, (value / total) * 100));
 }
-
-type StageBar = {
-  label: string;
-  value?: number;
-  color: string;
-};
 
 function buildCompleteStageBars(message: LatencyMessageSummary): StageBar[] {
   const llmResidual =
@@ -97,45 +157,202 @@ function renderStageBar(message: LatencyMessageSummary): string {
 }
 
 function renderLegend(): string {
-  const labels = buildCompleteStageBars({ key: "legend" }).map(
-    (segment) =>
-      `<span class="legend-item"><span class="legend-dot" style="background:${segment.color}"></span>${escapeHtml(segment.label)}</span>`,
-  );
-  return `<div class="legend">${labels.join("")}</div>`;
+  return `<div class="legend">${buildCompleteStageBars({ key: "legend" })
+    .map(
+      (segment) =>
+        `<span class="legend-item"><span class="legend-dot" style="background:${segment.color}"></span>${escapeHtml(segment.label)}</span>`,
+    )
+    .join("")}</div>`;
 }
 
-function renderKpiCards(report: LatencyAggregateReport): string {
-  const complete = report.series.e2e_local_complete_ms;
-  const first = report.series.e2e_local_first_visible_ms;
-  const llm = report.series.t5_llm_total_ms;
-  const decodeTps = report.series.t5_llm_decode_tps;
-  const gpu = report.series.hardware_gpu_util_avg_pct;
-  const cards = [
-    ["Messages", String(report.messages.length), `${report.recordsScanned} records scanned`],
-    ["E2E First Avg", formatMs(first?.avg), `P95 ${formatMs(first?.p95)}`],
-    ["E2E Complete Avg", formatMs(complete?.avg), `P95 ${formatMs(complete?.p95)}`],
-    ["LLM Total Avg", formatMs(llm?.avg), `P95 ${formatMs(llm?.p95)}`],
-    ["Decode TPS Avg", formatCount(decodeTps?.avg), `P95 ${formatCount(decodeTps?.p95)}`],
-    ["GPU Util Avg", formatPct(gpu?.avg), `P95 ${formatPct(gpu?.p95)}`],
+function renderDownloadButtons(): string {
+  return `
+    <div class="download-row">
+      <button class="dl-btn" data-download="messages-json">Download messages.json</button>
+      <button class="dl-btn" data-download="messages-csv">Download messages.csv</button>
+      <button class="dl-btn" data-download="hardware-json">Download hardware.json</button>
+      <button class="dl-btn" data-download="hardware-csv">Download hardware.csv</button>
+    </div>`;
+}
+
+function renderPerMessageButtons(index: number): string {
+  return `
+    <div class="download-row small">
+      <button class="dl-btn" data-download="message-json" data-message-index="${index}">Download message JSON</button>
+      <button class="dl-btn" data-download="message-csv" data-message-index="${index}">Download message CSV</button>
+    </div>`;
+}
+
+function buildMessageCsv(messages: LatencyMessageSummary[]): string {
+  const headers = [
+    "key",
+    "accountId",
+    "messageId",
+    "runId",
+    "t1_ms",
+    "t2_ms",
+    "t3_ms",
+    "t4_ms",
+    "t5_calls",
+    "t5_ttft_first_ms",
+    "t5_ttft_sum_ms",
+    "t5_total_sum_ms",
+    "t5_load_sum_ms",
+    "t5_prefill_sum_ms",
+    "t5_decode_sum_ms",
+    "t5_input_tokens",
+    "t5_output_tokens",
+    "t5_total_tokens",
+    "t5_prefill_tps",
+    "t5_decode_tps",
+    "t5_total_tps",
+    "t5_prefill_ms_per_1k_input_tokens",
+    "t5_decode_ms_per_output_token",
+    "hardware_sample_count",
+    "hardware_cpu_util_avg_pct",
+    "hardware_mem_util_avg_pct",
+    "hardware_gpu_util_avg_pct",
+    "hardware_gpu_mem_util_avg_pct",
+    "hardware_gpu_power_avg_w",
+    "t6_first_ms",
+    "t6_final_ms",
+    "e2e_local_first_ms",
+    "e2e_local_complete_ms",
   ];
-  return cards
-    .map(
-      ([title, value, subtitle]) => `
-        <section class="kpi-card">
-          <div class="kpi-title">${escapeHtml(title)}</div>
-          <div class="kpi-value">${escapeHtml(value)}</div>
-          <div class="kpi-subtitle">${escapeHtml(subtitle)}</div>
-        </section>`,
-    )
-    .join("");
+  const rows = messages.map((message) =>
+    [
+      message.key,
+      message.accountId,
+      message.messageId,
+      message.runId,
+      message.t1FeishuInboundMs,
+      message.t2GatewayEnqueueMs,
+      message.t3WorkerQueueWaitMs,
+      message.t4AgentPreprocessMs,
+      message.t5LlmCallCount,
+      message.t5LlmTtftMs,
+      message.t5LlmTtftSumMs,
+      message.t5LlmTotalMs,
+      message.t5LlmLoadMs,
+      message.t5LlmPrefillMs,
+      message.t5LlmDecodeMs,
+      message.t5InputTokens,
+      message.t5OutputTokens,
+      message.t5TotalTokens,
+      message.t5PrefillTokensPerSec,
+      message.t5DecodeTokensPerSec,
+      message.t5TotalTokensPerSec,
+      message.t5PrefillMsPer1kInputTokens,
+      message.t5DecodeMsPerOutputToken,
+      message.hardwareSampleCount,
+      message.hardwareCpuUtilAvgPct,
+      message.hardwareMemUtilAvgPct,
+      message.hardwareGpuUtilAvgPct,
+      message.hardwareGpuMemUtilAvgPct,
+      message.hardwareGpuPowerAvgW,
+      message.t6FeishuFirstAckMs,
+      message.t6FeishuFinalAckMs,
+      message.localFirstVisibleMs,
+      message.localCompleteMs,
+    ]
+      .map(csvEscape)
+      .join(","),
+  );
+  return [headers.join(","), ...rows].join("\n");
+}
+
+function buildHardwareCsv(samples: HardwareTraceSample[]): string {
+  const headers = [
+    "ts",
+    "epochMs",
+    "cpuUtilPct",
+    "loadAvg1",
+    "loadAvg5",
+    "loadAvg15",
+    "memTotalBytes",
+    "memFreeBytes",
+    "memUsedBytes",
+    "memUtilPct",
+    "gpuIndex",
+    "gpuName",
+    "gpuUtilPct",
+    "gpuMemUtilPct",
+    "gpuMemoryUsedMiB",
+    "gpuMemoryTotalMiB",
+    "gpuPowerDrawW",
+    "gpuSmClockMHz",
+    "gpuMemClockMHz",
+    "gpuTemperatureC",
+  ];
+  const rows: string[] = [];
+  for (const sample of samples) {
+    if (!sample.gpus || sample.gpus.length === 0) {
+      rows.push(
+        [
+          sample.ts,
+          sample.epochMs,
+          sample.cpuUtilPct,
+          sample.loadAvg1,
+          sample.loadAvg5,
+          sample.loadAvg15,
+          sample.memTotalBytes,
+          sample.memFreeBytes,
+          sample.memUsedBytes,
+          sample.memUtilPct,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+        ]
+          .map(csvEscape)
+          .join(","),
+      );
+      continue;
+    }
+    for (const gpu of sample.gpus) {
+      rows.push(
+        [
+          sample.ts,
+          sample.epochMs,
+          sample.cpuUtilPct,
+          sample.loadAvg1,
+          sample.loadAvg5,
+          sample.loadAvg15,
+          sample.memTotalBytes,
+          sample.memFreeBytes,
+          sample.memUsedBytes,
+          sample.memUtilPct,
+          gpu.index,
+          gpu.name,
+          gpu.utilizationGpuPct,
+          gpu.utilizationMemPct,
+          gpu.memoryUsedMiB,
+          gpu.memoryTotalMiB,
+          gpu.powerDrawW,
+          gpu.smClockMHz,
+          gpu.memClockMHz,
+          gpu.temperatureC,
+        ]
+          .map(csvEscape)
+          .join(","),
+      );
+    }
+  }
+  return [headers.join(","), ...rows].join("\n");
 }
 
 function renderMessageCards(messages: LatencyMessageSummary[]): string {
   return messages
-    .map((message) => {
+    .map((message, index) => {
       const rows = [
-        ["Message", String(message.messageId ?? "-")],
-        ["Run", String(message.runId ?? "-")],
+        ["Message", String(message.messageId ?? "N/A")],
+        ["Run", String(message.runId ?? "N/A")],
         ["Calls", formatCount(message.t5LlmCallCount)],
         ["Input Tokens", formatCount(message.t5InputTokens)],
         ["Output Tokens", formatCount(message.t5OutputTokens)],
@@ -143,9 +360,14 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
         ["Prefill TPS", formatCount(message.t5PrefillTokensPerSec)],
         ["Decode TPS", formatCount(message.t5DecodeTokensPerSec)],
         ["Total TPS", formatCount(message.t5TotalTokensPerSec)],
+        ["HW Samples", formatCount(message.hardwareSampleCount)],
+        ["HW CPU Avg", formatPct(message.hardwareCpuUtilAvgPct)],
+        ["HW Mem Avg", formatPct(message.hardwareMemUtilAvgPct)],
+        ["HW GPU Avg", formatPct(message.hardwareGpuUtilAvgPct)],
+        ["HW GPU Mem Avg", formatPct(message.hardwareGpuMemUtilAvgPct)],
+        ["HW GPU Power Avg", formatWatts(message.hardwareGpuPowerAvgW)],
         ["E2E First", formatMs(message.localFirstVisibleMs)],
         ["E2E Complete", formatMs(message.localCompleteMs)],
-        ["HW GPU Avg", formatPct(message.hardwareGpuUtilAvgPct)],
       ]
         .map(
           ([label, value]) =>
@@ -162,56 +384,337 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
             <div class="message-e2e">${escapeHtml(formatMs(message.localCompleteMs))}</div>
           </div>
           ${renderStageBar(message)}
+          ${renderPerMessageButtons(index)}
           <div class="message-grid">${rows}</div>
         </article>`;
     })
     .join("");
 }
 
-function renderSeriesTable(report: LatencyAggregateReport): string {
-  const rows = [
-    ["t1_feishu_inbound_ms", "Feishu inbound"],
-    ["t2_gateway_enqueue_ms", "Gateway enqueue"],
-    ["t3_worker_queue_wait_ms", "Worker queue"],
-    ["t4_agent_preprocess_ms", "Agent preprocess"],
-    ["t5_llm_total_ms", "LLM total"],
-    ["t5_llm_load_ms", "LLM load"],
-    ["t5_llm_prefill_ms", "LLM prefill"],
-    ["t5_llm_decode_ms", "LLM decode"],
-    ["t5_llm_input_tokens", "Input tokens"],
-    ["t5_llm_output_tokens", "Output tokens"],
-    ["t5_llm_prefill_tps", "Prefill TPS"],
-    ["t5_llm_decode_tps", "Decode TPS"],
-    ["t5_llm_total_tps", "Total TPS"],
-    ["hardware_gpu_util_avg_pct", "GPU util avg"],
-    ["hardware_gpu_power_avg_w", "GPU power avg"],
-  ]
-    .map(([key, label]) => {
-      const series = report.series[key];
-      const formatter =
-        key.endsWith("_tokens") || key.endsWith("_tps")
-          ? formatCount
-          : key.endsWith("_pct")
-            ? formatPct
-            : key.endsWith("_avg_w")
-              ? formatWatts
-              : formatMs;
-      return `<tr>
-        <td>${escapeHtml(label)}</td>
-        <td>${series?.count ?? 0}</td>
-        <td>${escapeHtml(formatter(series?.avg))}</td>
-        <td>${escapeHtml(formatter(series?.p95))}</td>
-        <td>${escapeHtml(formatter(series?.p99))}</td>
-      </tr>`;
-    })
+function renderMessageMetricsTable(messages: LatencyMessageSummary[]): string {
+  const rows = messages
+    .map(
+      (message) => `<tr>
+        <td>${escapeHtml(String(message.accountId ?? "N/A"))}</td>
+        <td>${escapeHtml(String(message.messageId ?? "N/A"))}</td>
+        <td>${escapeHtml(formatMs(message.localFirstVisibleMs))}</td>
+        <td>${escapeHtml(formatMs(message.localCompleteMs))}</td>
+        <td>${escapeHtml(formatCount(message.t5LlmCallCount))}</td>
+        <td>${escapeHtml(formatCount(message.t5InputTokens))}</td>
+        <td>${escapeHtml(formatCount(message.t5OutputTokens))}</td>
+        <td>${escapeHtml(formatCount(message.t5PrefillTokensPerSec))}</td>
+        <td>${escapeHtml(formatCount(message.t5DecodeTokensPerSec))}</td>
+        <td>${escapeHtml(formatPct(message.hardwareGpuUtilAvgPct))}</td>
+        <td>${escapeHtml(formatWatts(message.hardwareGpuPowerAvgW))}</td>
+      </tr>`,
+    )
     .join("");
   return `<table class="series-table">
-    <thead><tr><th>Metric</th><th>Count</th><th>Avg</th><th>P95</th><th>P99</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Account</th>
+        <th>Message</th>
+        <th>E2E First</th>
+        <th>E2E Complete</th>
+        <th>Calls</th>
+        <th>Input</th>
+        <th>Output</th>
+        <th>Prefill TPS</th>
+        <th>Decode TPS</th>
+        <th>GPU Util</th>
+        <th>GPU Power</th>
+      </tr>
+    </thead>
     <tbody>${rows}</tbody>
   </table>`;
 }
 
-export function renderLatencyReportHtml(report: LatencyAggregateReport): string {
+function renderAggregateSection(report: LatencyAggregateReport): string {
+  const complete = report.series.e2e_local_complete_ms;
+  const first = report.series.e2e_local_first_visible_ms;
+  const llm = report.series.t5_llm_total_ms;
+  const decodeTps = report.series.t5_llm_decode_tps;
+  const cards = [
+    ["Messages", String(report.messages.length), `${report.recordsScanned} records scanned`],
+    ["E2E First Avg", formatMs(first?.avg), `P95 ${formatMs(first?.p95)}`],
+    ["E2E Complete Avg", formatMs(complete?.avg), `P95 ${formatMs(complete?.p95)}`],
+    ["LLM Total Avg", formatMs(llm?.avg), `P95 ${formatMs(llm?.p95)}`],
+    ["Decode TPS Avg", formatCount(decodeTps?.avg), `P95 ${formatCount(decodeTps?.p95)}`],
+  ]
+    .map(
+      ([title, value, subtitle]) => `
+        <section class="kpi-card">
+          <div class="kpi-title">${escapeHtml(title)}</div>
+          <div class="kpi-value">${escapeHtml(value)}</div>
+          <div class="kpi-subtitle">${escapeHtml(subtitle)}</div>
+        </section>`,
+    )
+    .join("");
+
+  const rows = Object.entries(report.series)
+    .map(([name, series]) => {
+      const formatter =
+        name.endsWith("_tokens") || name.endsWith("_tps")
+          ? formatCount
+          : name.endsWith("_pct")
+            ? formatPct
+            : name.endsWith("_avg_w")
+              ? formatWatts
+              : formatMs;
+      return `<tr>
+        <td>${escapeHtml(name)}</td>
+        <td>${series.count}</td>
+        <td>${escapeHtml(formatter(series.avg))}</td>
+        <td>${escapeHtml(formatter(series.p95))}</td>
+        <td>${escapeHtml(formatter(series.p99))}</td>
+      </tr>`;
+    })
+    .join("");
+
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Aggregate Summary</h2>
+      <div class="kpi-grid">${cards}</div>
+      <table class="series-table">
+        <thead><tr><th>Metric</th><th>Count</th><th>Avg</th><th>P95</th><th>P99</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </section>`;
+}
+
+function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
+  const firstTs = samples[0]?.epochMs ?? 0;
+  const toX = (epochMs: number) => epochMs - firstTs;
+  const metrics: ChartMetric[] = [
+    {
+      id: "cpu-util",
+      title: "CPU Utilization",
+      unit: "%",
+      points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.cpuUtilPct })),
+    },
+    {
+      id: "mem-util",
+      title: "System Memory Utilization",
+      unit: "%",
+      points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.memUtilPct })),
+    },
+    {
+      id: "load-1",
+      title: "Load Average 1m",
+      unit: "load",
+      points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg1 })),
+    },
+    {
+      id: "load-5",
+      title: "Load Average 5m",
+      unit: "load",
+      points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg5 })),
+    },
+    {
+      id: "load-15",
+      title: "Load Average 15m",
+      unit: "load",
+      points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg15 })),
+    },
+  ];
+
+  const gpuIndexes = new Set<number>();
+  for (const sample of samples) {
+    for (const gpu of sample.gpus ?? []) {
+      if (typeof gpu.index === "number") {
+        gpuIndexes.add(gpu.index);
+      }
+    }
+  }
+
+  for (const gpuIndex of [...gpuIndexes].toSorted((a, b) => a - b)) {
+    const gpuLabel = `GPU ${gpuIndex}`;
+    const getGpu = (sample: HardwareTraceSample) =>
+      sample.gpus?.find((gpu) => gpu.index === gpuIndex);
+    metrics.push(
+      {
+        id: `gpu-${gpuIndex}-util`,
+        title: `${gpuLabel} Utilization`,
+        unit: "%",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.utilizationGpuPct,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-mem-util`,
+        title: `${gpuLabel} Memory Utilization`,
+        unit: "%",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y:
+            getGpu(sample)?.memoryUsedMiB !== undefined &&
+            getGpu(sample)?.memoryTotalMiB !== undefined &&
+            (getGpu(sample)?.memoryTotalMiB ?? 0) > 0
+              ? ((getGpu(sample)?.memoryUsedMiB ?? 0) / (getGpu(sample)?.memoryTotalMiB ?? 1)) * 100
+              : getGpu(sample)?.utilizationMemPct,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-mem-used`,
+        title: `${gpuLabel} Memory Used`,
+        unit: "MiB",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.memoryUsedMiB,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-mem-total`,
+        title: `${gpuLabel} Memory Total`,
+        unit: "MiB",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.memoryTotalMiB,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-power`,
+        title: `${gpuLabel} Power Draw`,
+        unit: "W",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.powerDrawW,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-sm-clock`,
+        title: `${gpuLabel} SM Clock`,
+        unit: "MHz",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.smClockMHz,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-mem-clock`,
+        title: `${gpuLabel} Memory Clock`,
+        unit: "MHz",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.memClockMHz,
+        })),
+      },
+      {
+        id: `gpu-${gpuIndex}-temperature`,
+        title: `${gpuLabel} Temperature`,
+        unit: "C",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.temperatureC,
+        })),
+      },
+    );
+  }
+
+  if (gpuIndexes.size === 0) {
+    metrics.push(
+      { id: "gpu-util-na", title: "GPU Utilization", unit: "%", points: [] },
+      { id: "gpu-mem-util-na", title: "GPU Memory Utilization", unit: "%", points: [] },
+      { id: "gpu-mem-used-na", title: "GPU Memory Used", unit: "MiB", points: [] },
+      { id: "gpu-mem-total-na", title: "GPU Memory Total", unit: "MiB", points: [] },
+      { id: "gpu-power-na", title: "GPU Power Draw", unit: "W", points: [] },
+      { id: "gpu-sm-clock-na", title: "GPU SM Clock", unit: "MHz", points: [] },
+      { id: "gpu-mem-clock-na", title: "GPU Memory Clock", unit: "MHz", points: [] },
+      { id: "gpu-temp-na", title: "GPU Temperature", unit: "C", points: [] },
+    );
+  }
+  return metrics;
+}
+
+function renderChartSvg(metric: ChartMetric): string {
+  const width = 760;
+  const height = 220;
+  const padding = 26;
+  const numericPoints = metric.points.filter(
+    (point): point is { x: number; y: number } =>
+      typeof point.y === "number" && Number.isFinite(point.y),
+  );
+  if (numericPoints.length === 0) {
+    return `<div class="chart-empty">N/A</div>`;
+  }
+  const minX = Math.min(...numericPoints.map((point) => point.x));
+  const maxX = Math.max(...numericPoints.map((point) => point.x));
+  let minY = Math.min(...numericPoints.map((point) => point.y));
+  let maxY = Math.max(...numericPoints.map((point) => point.y));
+  if (minY === maxY) {
+    minY -= 1;
+    maxY += 1;
+  }
+  const xSpan = Math.max(1, maxX - minX);
+  const ySpan = Math.max(1, maxY - minY);
+  const points = numericPoints
+    .map((point) => {
+      const x = padding + ((point.x - minX) / xSpan) * (width - padding * 2);
+      const y = height - padding - ((point.y - minY) / ySpan) * (height - padding * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const latest = numericPoints.at(-1)?.y;
+  const min = Math.min(...numericPoints.map((point) => point.y));
+  const max = Math.max(...numericPoints.map((point) => point.y));
+  return `
+    <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
+      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="axis" />
+      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="axis" />
+      <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      <text x="${padding}" y="${padding - 6}" class="axis-label">${escapeHtml(`max ${formatUnit(metric.unit, max)}`)}</text>
+      <text x="${padding}" y="${height - 6}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
+      <text x="${width - padding}" y="${padding - 6}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
+    </svg>`;
+}
+
+function renderHardwareSection(samples: HardwareTraceSample[]): string {
+  const metrics = collectHardwareMetrics(samples);
+  const cards = metrics
+    .map(
+      (metric) => `
+        <article class="chart-card">
+          <div class="chart-header">
+            <div class="chart-title">${escapeHtml(metric.title)}</div>
+            <div class="chart-subtitle">${escapeHtml(metric.unit)}</div>
+          </div>
+          ${renderChartSvg(metric)}
+        </article>`,
+    )
+    .join("");
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Hardware Timeline</h2>
+      <p class="section-note">Raw hardware samples across the captured period. Missing metrics stay visible as N/A rather than being hidden.</p>
+      ${renderDownloadButtons()}
+      <div class="chart-grid">${cards}</div>
+    </section>`;
+}
+
+function renderNotes(): string {
+  return `
+    <section class="notes">
+      <div>Note: default view is message-level only. Use the visualize command with <code>--avg</code> if you also want aggregate avg, P95, and P99 sections.</div>
+      <div>Note: T6.first and T6.final use different start points, so T6.final can be smaller than T6.first.</div>
+      <div>Note: GPU memory charts fall back to <code>utilization.memory</code> when <code>memory.used / memory.total</code> is unavailable.</div>
+    </section>`;
+}
+
+export function renderLatencyReportHtml(
+  input: RenderLatencyReportHtmlOptions | LatencyAggregateReport,
+): string {
+  const options =
+    "report" in input ? input : { report: input, hardwareSamples: undefined, avgMode: false };
+  const report = options.report;
+  const hardwareSamples = options.hardwareSamples ?? [];
+  const avgMode = options.avgMode ?? false;
+
+  const messageJson = safeJson(report.messages);
+  const hardwareJson = safeJson(hardwareSamples);
+  const messageCsv = safeJson(buildMessageCsv(report.messages));
+  const hardwareCsv = safeJson(buildHardwareCsv(hardwareSamples));
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -238,26 +741,10 @@ export function renderLatencyReportHtml(report: LatencyAggregateReport): string 
         radial-gradient(circle at top right, rgba(239,68,68,0.10), transparent 24%),
         linear-gradient(180deg, #f8f4ed 0%, var(--bg) 100%);
     }
-    .wrap {
-      max-width: 1320px;
-      margin: 0 auto;
-      padding: 28px 24px 64px;
-    }
-    .hero {
-      display: grid;
-      gap: 8px;
-      margin-bottom: 24px;
-    }
-    h1 {
-      margin: 0;
-      font-size: 34px;
-      letter-spacing: -0.03em;
-    }
-    .hero p {
-      margin: 0;
-      color: var(--muted);
-      max-width: 880px;
-    }
+    .wrap { max-width: 1440px; margin: 0 auto; padding: 28px 24px 64px; }
+    .hero { display: grid; gap: 10px; margin-bottom: 24px; }
+    h1 { margin: 0; font-size: 34px; letter-spacing: -0.03em; }
+    .hero p, .section-note { margin: 0; color: var(--muted); max-width: 980px; }
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -266,105 +753,49 @@ export function renderLatencyReportHtml(report: LatencyAggregateReport): string 
       padding: 20px;
       backdrop-filter: blur(18px);
     }
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
-      margin-bottom: 20px;
-    }
-    .kpi-card {
-      background: rgba(255,255,255,0.74);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-    }
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-top: 16px; }
+    .kpi-card { background: rgba(255,255,255,0.74); border: 1px solid var(--line); border-radius: 18px; padding: 16px; }
     .kpi-title { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
     .kpi-value { margin-top: 8px; font-size: 28px; font-weight: 700; font-family: "Avenir Next Condensed", "Helvetica Neue", sans-serif; }
     .kpi-subtitle { margin-top: 4px; color: var(--muted); }
-    h2 {
-      margin: 0 0 14px;
-      font: 600 18px/1.2 "Avenir Next Condensed", "Helvetica Neue", sans-serif;
-      letter-spacing: 0.01em;
-    }
-    .legend {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px 14px;
-      margin-bottom: 16px;
-      color: var(--muted);
-    }
+    h2 { margin: 0 0 14px; font: 600 18px/1.2 "Avenir Next Condensed", "Helvetica Neue", sans-serif; letter-spacing: 0.01em; }
+    .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 12px 0 16px; color: var(--muted); }
     .legend-item { display: inline-flex; align-items: center; gap: 8px; }
     .legend-dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
-    .message-list {
-      display: grid;
-      gap: 14px;
-    }
-    .message-card {
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 16px;
-      background: rgba(255,255,255,0.7);
-    }
-    .message-header {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: baseline;
-      margin-bottom: 12px;
-    }
+    .message-list { display: grid; gap: 14px; }
+    .message-card { border: 1px solid var(--line); border-radius: 18px; padding: 16px; background: rgba(255,255,255,0.7); }
+    .message-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 12px; }
     .message-title { font-weight: 700; font-size: 18px; }
     .message-subtitle { color: var(--muted); font-size: 12px; word-break: break-all; }
     .message-e2e { font: 700 24px/1 "Avenir Next Condensed", "Helvetica Neue", sans-serif; }
-    .stacked-bar {
-      display: flex;
-      width: 100%;
-      height: 18px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: rgba(148,163,184,0.14);
-      border: 1px solid rgba(148,163,184,0.18);
-      margin-bottom: 12px;
-    }
+    .stacked-bar { display: flex; width: 100%; height: 18px; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,0.14); border: 1px solid rgba(148,163,184,0.18); margin-bottom: 12px; }
     .segment { height: 100%; }
     .segment.empty { width: 100%; background: rgba(148,163,184,0.16); }
-    .message-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 8px 18px;
-    }
-    .meta-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      border-top: 1px dashed rgba(148,163,184,0.2);
-      padding-top: 6px;
-    }
+    .message-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 18px; }
+    .meta-row { display: flex; justify-content: space-between; gap: 10px; border-top: 1px dashed rgba(148,163,184,0.2); padding-top: 6px; }
     .meta-label { color: var(--muted); }
     .meta-value { font-weight: 600; }
-    .series-table {
-      width: 100%;
-      border-collapse: collapse;
-      overflow: hidden;
-      border-radius: 16px;
-      background: rgba(255,255,255,0.76);
+    .series-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; background: rgba(255,255,255,0.76); margin-top: 14px; }
+    .series-table th, .series-table td { padding: 10px 12px; border-bottom: 1px solid rgba(148,163,184,0.16); text-align: left; }
+    .series-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 16px; }
+    .chart-card { border: 1px solid var(--line); border-radius: 18px; padding: 14px; background: rgba(255,255,255,0.7); }
+    .chart-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 8px; }
+    .chart-title { font-weight: 700; }
+    .chart-subtitle { color: var(--muted); font-size: 12px; }
+    .chart-svg { width: 100%; height: 220px; display: block; background: linear-gradient(180deg, rgba(15,118,110,0.06), rgba(15,118,110,0.01)); border-radius: 12px; }
+    .axis { stroke: rgba(15,23,42,0.16); stroke-width: 1; }
+    .axis-label { fill: #6b7280; font-size: 11px; font-family: "Helvetica Neue", Arial, sans-serif; }
+    .chart-empty { display: grid; place-items: center; height: 220px; border-radius: 12px; background: rgba(148,163,184,0.12); color: var(--muted); border: 1px dashed rgba(148,163,184,0.28); }
+    .download-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 0; }
+    .download-row.small { margin: 0 0 12px; }
+    .dl-btn {
+      appearance: none; border: 1px solid rgba(15,23,42,0.12); background: white; color: var(--text);
+      border-radius: 999px; padding: 8px 12px; font: 600 12px/1 "Helvetica Neue", Arial, sans-serif; cursor: pointer;
     }
-    .series-table th, .series-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid rgba(148,163,184,0.16);
-      text-align: left;
-    }
-    .series-table th {
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .notes {
-      margin-top: 20px;
-      color: var(--muted);
-      display: grid;
-      gap: 6px;
-    }
+    .dl-btn:hover { background: #f8fafc; }
+    .notes { margin-top: 20px; color: var(--muted); display: grid; gap: 6px; }
+    code { background: rgba(15,23,42,0.06); padding: 1px 6px; border-radius: 999px; }
     @media (max-width: 800px) {
       .wrap { padding: 18px 14px 40px; }
       h1 { font-size: 28px; }
@@ -376,30 +807,87 @@ export function renderLatencyReportHtml(report: LatencyAggregateReport): string 
   <main class="wrap">
     <section class="hero">
       <h1>OpenClaw Latency Dashboard</h1>
-      <p>Per-message latency, LLM token efficiency, and optional hardware utilization correlated to the T5 inference window.</p>
+      <p>Default view is message-by-message. Aggregate avg, P95, and P99 are hidden unless the dashboard is generated with <code>--avg</code>. Hardware is shown as raw time-series instead of a single collapsed number.</p>
+      ${renderDownloadButtons()}
     </section>
 
     <section class="panel">
-      <h2>Overview</h2>
-      <div class="kpi-grid">${renderKpiCards(report)}</div>
-    </section>
-
-    <section class="panel" style="margin-top:20px">
       <h2>Per-message Timeline</h2>
+      <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>
       ${renderLegend()}
       <div class="message-list">${renderMessageCards(report.messages)}</div>
     </section>
 
     <section class="panel" style="margin-top:20px">
-      <h2>Series Summary</h2>
-      ${renderSeriesTable(report)}
+      <h2>Per-message Metrics Table</h2>
+      <p class="section-note">This table replaces the old default avg/P95/P99 summary so every interaction stays visible.</p>
+      ${renderMessageMetricsTable(report.messages)}
     </section>
 
-    <section class="notes">
-      <div>Note: T6.first and T6.final are measured from different start points, so T6.final can be lower than T6.first.</div>
-      <div>Note: HW.gpuMem.avg is blank when GPU memory capacity or usage samples are unavailable from the runtime platform.</div>
-    </section>
+    ${renderHardwareSection(hardwareSamples)}
+    ${avgMode ? renderAggregateSection(report) : ""}
+    ${renderNotes()}
   </main>
+
+  <script>
+    const MESSAGES = ${messageJson};
+    const HARDWARE = ${hardwareJson};
+    const MESSAGE_CSV = ${messageCsv};
+    const HARDWARE_CSV = ${hardwareCsv};
+
+    function downloadText(filename, content, type) {
+      const blob = new Blob([content], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function messageToCsv(message) {
+      const headers = Object.keys(message);
+      const row = headers.map((key) => {
+        const value = message[key];
+        const text = value == null ? "" : String(value);
+        return /[",\\n]/.test(text) ? '"' + text.replaceAll('"', '""') + '"' : text;
+      });
+      return headers.join(",") + "\\n" + row.join(",");
+    }
+
+    document.querySelectorAll("[data-download]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const type = button.getAttribute("data-download");
+        if (type === "messages-json") {
+          downloadText("messages.json", JSON.stringify(MESSAGES, null, 2), "application/json");
+          return;
+        }
+        if (type === "messages-csv") {
+          downloadText("messages.csv", MESSAGE_CSV, "text/csv;charset=utf-8");
+          return;
+        }
+        if (type === "hardware-json") {
+          downloadText("hardware.json", JSON.stringify(HARDWARE, null, 2), "application/json");
+          return;
+        }
+        if (type === "hardware-csv") {
+          downloadText("hardware.csv", HARDWARE_CSV, "text/csv;charset=utf-8");
+          return;
+        }
+        if (type === "message-json") {
+          const index = Number(button.getAttribute("data-message-index"));
+          downloadText("message-" + index + ".json", JSON.stringify(MESSAGES[index], null, 2), "application/json");
+          return;
+        }
+        if (type === "message-csv") {
+          const index = Number(button.getAttribute("data-message-index"));
+          downloadText("message-" + index + ".csv", messageToCsv(MESSAGES[index]), "text/csv;charset=utf-8");
+        }
+      });
+    });
+  </script>
 </body>
 </html>`;
 }
