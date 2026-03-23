@@ -14,16 +14,20 @@ const memoryCorePlugin = {
           config: ctx.config,
           agentSessionKey: ctx.sessionKey,
         });
+        const memoryRecallTool = api.runtime.tools.createMemoryRecallTool({
+          config: ctx.config,
+          agentSessionKey: ctx.sessionKey,
+        });
         const memoryGetTool = api.runtime.tools.createMemoryGetTool({
           config: ctx.config,
           agentSessionKey: ctx.sessionKey,
         });
-        if (!memorySearchTool || !memoryGetTool) {
+        if (!memorySearchTool || !memoryRecallTool || !memoryGetTool) {
           return null;
         }
-        return [memorySearchTool, memoryGetTool];
+        return [memoryRecallTool, memorySearchTool, memoryGetTool];
       },
-      { names: ["memory_search", "memory_get"] },
+      { names: ["memory_recall", "memory_search", "memory_get"] },
     );
 
     api.registerCli(

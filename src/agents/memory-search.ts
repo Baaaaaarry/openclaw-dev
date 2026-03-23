@@ -1,7 +1,8 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { OpenClawConfig, MemorySearchConfig } from "../config/config.js";
-import { resolveStateDir } from "../config/paths.js";
+import { resolveConfigPathCandidate, resolveStateDir } from "../config/paths.js";
 import { clampInt, clampNumber, resolveUserPath } from "../utils.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 
@@ -99,6 +100,7 @@ const DEFAULT_TEMPORAL_DECAY_ENABLED = false;
 const DEFAULT_TEMPORAL_DECAY_HALF_LIFE_DAYS = 30;
 const DEFAULT_CACHE_ENABLED = true;
 const DEFAULT_SOURCES: Array<"memory" | "sessions"> = ["memory"];
+const AUTO_RAG_DOC_DIR_NAMES = ["doc", "docs"] as const;
 
 function normalizeSources(
   sources: Array<"memory" | "sessions"> | undefined,
@@ -128,6 +130,30 @@ function resolveStorePath(agentId: string, raw?: string): string {
   }
   const withToken = raw.includes("{agentId}") ? raw.replaceAll("{agentId}", agentId) : raw;
   return resolveUserPath(withToken);
+}
+
+function resolveImplicitDocPaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  const roots: string[] = [];
+  const configOverride = env.OPENCLAW_CONFIG_PATH?.trim() || env.CLAWDBOT_CONFIG_PATH?.trim();
+  if (configOverride) {
+    roots.push(path.dirname(resolveConfigPathCandidate(env)));
+  }
+  const stateOverride = env.OPENCLAW_STATE_DIR?.trim() || env.CLAWDBOT_STATE_DIR?.trim();
+  if (stateOverride) {
+    roots.push(path.dirname(resolveStateDir(env, os.homedir)));
+  }
+  const discovered: string[] = [];
+  for (const root of roots) {
+    for (const dirname of AUTO_RAG_DOC_DIR_NAMES) {
+      const candidate = path.join(root, dirname);
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+          discovered.push(candidate);
+        }
+      } catch {}
+    }
+  }
+  return Array.from(new Set(discovered));
 }
 
 function mergeConfig(
@@ -196,7 +222,7 @@ function mergeConfig(
   const rawPaths = [...(defaults?.extraPaths ?? []), ...(overrides?.extraPaths ?? [])]
     .map((value) => value.trim())
     .filter(Boolean);
-  const extraPaths = Array.from(new Set(rawPaths));
+  const extraPaths = Array.from(new Set([...rawPaths, ...resolveImplicitDocPaths()]));
   const vector = {
     enabled: overrides?.store?.vector?.enabled ?? defaults?.store?.vector?.enabled ?? true,
     extensionPath:

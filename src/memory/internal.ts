@@ -5,6 +5,8 @@ import path from "node:path";
 import { runTasksWithConcurrency } from "../utils/run-with-concurrency.js";
 import { isFileMissingError } from "./fs-utils.js";
 
+const MEMORY_DOCUMENT_EXTENSIONS = [".md", ".mdx", ".txt"] as const;
+
 export type MemoryFileEntry = {
   path: string;
   absPath: string;
@@ -45,6 +47,11 @@ export function normalizeExtraMemoryPaths(workspaceDir: string, extraPaths?: str
   return Array.from(new Set(resolved));
 }
 
+export function isSupportedMemoryDocumentPath(filePath: string): boolean {
+  const normalized = filePath.trim().toLowerCase();
+  return MEMORY_DOCUMENT_EXTENSIONS.some((extension) => normalized.endsWith(extension));
+}
+
 export function isMemoryPath(relPath: string): boolean {
   const normalized = normalizeRelPath(relPath);
   if (!normalized) {
@@ -53,7 +60,7 @@ export function isMemoryPath(relPath: string): boolean {
   if (normalized === "MEMORY.md" || normalized === "memory.md") {
     return true;
   }
-  return normalized.startsWith("memory/");
+  return normalized.startsWith("memory/") && isSupportedMemoryDocumentPath(normalized);
 }
 
 async function walkDir(dir: string, files: string[]) {
@@ -70,7 +77,7 @@ async function walkDir(dir: string, files: string[]) {
     if (!entry.isFile()) {
       continue;
     }
-    if (!entry.name.endsWith(".md")) {
+    if (!isSupportedMemoryDocumentPath(entry.name)) {
       continue;
     }
     files.push(full);
@@ -86,21 +93,21 @@ export async function listMemoryFiles(
   const altMemoryFile = path.join(workspaceDir, "memory.md");
   const memoryDir = path.join(workspaceDir, "memory");
 
-  const addMarkdownFile = async (absPath: string) => {
+  const addMemoryFile = async (absPath: string) => {
     try {
       const stat = await fs.lstat(absPath);
       if (stat.isSymbolicLink() || !stat.isFile()) {
         return;
       }
-      if (!absPath.endsWith(".md")) {
+      if (!isSupportedMemoryDocumentPath(absPath)) {
         return;
       }
       result.push(absPath);
     } catch {}
   };
 
-  await addMarkdownFile(memoryFile);
-  await addMarkdownFile(altMemoryFile);
+  await addMemoryFile(memoryFile);
+  await addMemoryFile(altMemoryFile);
   try {
     const dirStat = await fs.lstat(memoryDir);
     if (!dirStat.isSymbolicLink() && dirStat.isDirectory()) {
@@ -120,7 +127,7 @@ export async function listMemoryFiles(
           await walkDir(inputPath, result);
           continue;
         }
-        if (stat.isFile() && inputPath.endsWith(".md")) {
+        if (stat.isFile() && isSupportedMemoryDocumentPath(inputPath)) {
           result.push(inputPath);
         }
       } catch {}

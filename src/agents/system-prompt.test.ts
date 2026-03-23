@@ -179,6 +179,18 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Voice (TTS) is enabled.");
   });
 
+  it("requires memory_recall before answering when memory tools are available", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      toolNames: ["memory_recall", "memory_get"],
+    });
+
+    expect(prompt).toContain("## Memory Recall");
+    expect(prompt).toContain("first run memory_recall");
+    expect(prompt).toContain("local docs");
+    expect(prompt).toContain("memory_get");
+  });
+
   it("adds reasoning tag hint when enabled", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",

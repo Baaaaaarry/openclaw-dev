@@ -75,6 +75,21 @@ describe("MemoryIndexManager.readFile", () => {
     expect(result).toEqual({ text: "line 2", path: relPath });
   });
 
+  it("reads text files from the memory directory", async () => {
+    const relPath = "memory/procedure.txt";
+    const absPath = path.join(workspaceDir, relPath);
+    await fs.mkdir(path.dirname(absPath), { recursive: true });
+    await fs.writeFile(absPath, ["step 1", "step 2"].join("\n"), "utf-8");
+
+    manager = await getRequiredMemoryIndexManager({
+      cfg: createMemorySearchCfg({ workspaceDir, indexPath }),
+      agentId: "main",
+    });
+
+    const result = await manager.readFile({ relPath, from: 2, lines: 1 });
+    expect(result).toEqual({ text: "step 2", path: relPath });
+  });
+
   it("returns empty text when the requested slice is past EOF", async () => {
     const relPath = "memory/window.md";
     const absPath = path.join(workspaceDir, relPath);

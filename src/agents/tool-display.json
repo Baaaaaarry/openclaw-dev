@@ -289,6 +289,11 @@
       "title": "Memory Search",
       "detailKeys": ["query"]
     },
+    "memory_recall": {
+      "emoji": "🧠",
+      "title": "Memory Recall",
+      "detailKeys": ["query"]
+    },
     "memory_get": {
       "emoji": "📓",
       "title": "Memory Get",

@@ -37,20 +37,26 @@ function resolveMemoryToolContext(options: { config?: OpenClawConfig; agentSessi
   return { cfg, agentId };
 }
 
-export function createMemorySearchTool(options: {
-  config?: OpenClawConfig;
-  agentSessionKey?: string;
-}): AnyAgentTool | null {
+function createMemorySearchLikeTool(
+  options: {
+    config?: OpenClawConfig;
+    agentSessionKey?: string;
+  },
+  spec: {
+    name: "memory_search" | "memory_recall";
+    label: string;
+    description: string;
+  },
+): AnyAgentTool | null {
   const ctx = resolveMemoryToolContext(options);
   if (!ctx) {
     return null;
   }
   const { cfg, agentId } = ctx;
   return {
-    label: "Memory Search",
-    name: "memory_search",
-    description:
-      "Mandatory recall step: semantically search MEMORY.md + memory/*.md (and optional session transcripts) before answering questions about prior work, decisions, dates, people, preferences, or todos; returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
+    label: spec.label,
+    name: spec.name,
+    description: spec.description,
     parameters: MemorySearchSchema,
     execute: async (_toolCallId, params) => {
       const query = readStringParam(params, "query", { required: true });
@@ -61,7 +67,7 @@ export function createMemorySearchTool(options: {
         agentId,
       });
       if (!manager) {
-        return jsonResult(buildMemorySearchUnavailableResult(error));
+        return jsonResult(buildMemorySearchUnavailableResult(error, spec.name));
       }
       try {
         const citationsMode = resolveMemoryCitationsMode(cfg);
@@ -92,10 +98,34 @@ export function createMemorySearchTool(options: {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult(buildMemorySearchUnavailableResult(message));
+        return jsonResult(buildMemorySearchUnavailableResult(message, spec.name));
       }
     },
   };
+}
+
+export function createMemorySearchTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemorySearchLikeTool(options, {
+    label: "Memory Search",
+    name: "memory_search",
+    description:
+      "Mandatory recall step: semantically search MEMORY.md, memory/*, and indexed doc directories before answering questions about prior work, docs, architecture, configuration, or decisions; returns top snippets with path + lines. If response has disabled=true, memory retrieval is unavailable and should be surfaced to the user.",
+  });
+}
+
+export function createMemoryRecallTool(options: {
+  config?: OpenClawConfig;
+  agentSessionKey?: string;
+}): AnyAgentTool | null {
+  return createMemorySearchLikeTool(options, {
+    label: "Memory Recall",
+    name: "memory_recall",
+    description:
+      "Run this before answering factual questions grounded in local docs, MEMORY.md, memory/*, or indexed knowledge files. Search first, then use memory_get for only the needed lines.",
+  });
 }
 
 export function createMemoryGetTool(options: {
@@ -192,15 +222,18 @@ function clampResultsByInjectedChars(
   return clamped;
 }
 
-function buildMemorySearchUnavailableResult(error: string | undefined) {
+function buildMemorySearchUnavailableResult(
+  error: string | undefined,
+  toolName: "memory_search" | "memory_recall",
+) {
   const reason = (error ?? "memory search unavailable").trim() || "memory search unavailable";
   const isQuotaError = /insufficient_quota|quota|429/.test(reason.toLowerCase());
   const warning = isQuotaError
     ? "Memory search is unavailable because the embedding provider quota is exhausted."
     : "Memory search is unavailable due to an embedding/provider error.";
   const action = isQuotaError
-    ? "Top up or switch embedding provider, then retry memory_search."
-    : "Check embedding provider configuration and retry memory_search.";
+    ? `Top up or switch embedding provider, then retry ${toolName}.`
+    : `Check embedding provider configuration and retry ${toolName}.`;
   return {
     results: [],
     disabled: true,

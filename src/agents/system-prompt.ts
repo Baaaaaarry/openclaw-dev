@@ -42,12 +42,17 @@ function buildMemorySection(params: {
   if (params.isMinimal) {
     return [];
   }
-  if (!params.availableTools.has("memory_search") && !params.availableTools.has("memory_get")) {
+  const recallToolName = params.availableTools.has("memory_recall")
+    ? "memory_recall"
+    : params.availableTools.has("memory_search")
+      ? "memory_search"
+      : null;
+  if (!recallToolName || !params.availableTools.has("memory_get")) {
     return [];
   }
   const lines = [
     "## Memory Recall",
-    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    `Before answering factual questions that may be covered by local docs, MEMORY.md, memory/*, architecture notes, config docs, or prior work: first run ${recallToolName}; then use memory_get to pull only the needed lines before answering. If recall is low-confidence or empty, say you checked.`,
   ];
   if (params.citationsMode === "off") {
     lines.push(

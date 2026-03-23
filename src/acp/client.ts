@@ -17,7 +17,13 @@ import { isKnownCoreToolId } from "../agents/tool-catalog.js";
 import { ensureOpenClawCliOnPath } from "../infra/path-env.js";
 import { DANGEROUS_ACP_TOOLS } from "../security/dangerous-tools.js";
 
-const SAFE_AUTO_APPROVE_TOOL_IDS = new Set(["read", "search", "web_search", "memory_search"]);
+const SAFE_AUTO_APPROVE_TOOL_IDS = new Set([
+  "read",
+  "search",
+  "web_search",
+  "memory_recall",
+  "memory_search",
+]);
 const TRUSTED_SAFE_TOOL_ALIASES = new Set(["search"]);
 const READ_TOOL_PATH_KEYS = ["path", "file_path", "filePath"];
 const TOOL_NAME_MAX_LENGTH = 128;
@@ -26,6 +32,7 @@ const TOOL_KIND_BY_ID = new Map<string, string>([
   ["read", "read"],
   ["search", "search"],
   ["web_search", "search"],
+  ["memory_recall", "search"],
   ["memory_search", "search"],
 ]);
 

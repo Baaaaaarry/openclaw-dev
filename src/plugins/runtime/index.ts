@@ -1,6 +1,10 @@
 import { createRequire } from "node:module";
 import { resolveEffectiveMessagesConfig, resolveHumanDelayConfig } from "../../agents/identity.js";
-import { createMemoryGetTool, createMemorySearchTool } from "../../agents/tools/memory-tool.js";
+import {
+  createMemoryGetTool,
+  createMemoryRecallTool,
+  createMemorySearchTool,
+} from "../../agents/tools/memory-tool.js";
 import { handleSlackAction } from "../../agents/tools/slack-actions.js";
 import {
   chunkByNewline,
@@ -280,6 +284,7 @@ function createRuntimeMedia(): PluginRuntime["media"] {
 function createRuntimeTools(): PluginRuntime["tools"] {
   return {
     createMemoryGetTool,
+    createMemoryRecallTool,
     createMemorySearchTool,
     registerMemoryCli,
   };

@@ -1,10 +1,17 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveMemorySearchConfig } from "./memory-search.js";
 
 const asConfig = (cfg: OpenClawConfig): OpenClawConfig => cfg;
 
 describe("memory search config", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   function configWithDefaultProvider(
     provider: "openai" | "local" | "gemini" | "mistral",
   ): OpenClawConfig {
@@ -252,5 +259,53 @@ describe("memory search config", () => {
     });
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.sources).toContain("sessions");
+  });
+
+  it("auto-discovers a sibling doc directory next to the configured config path", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-rag-doc-config-"));
+    const docsDir = path.join(rootDir, "doc");
+    await fs.mkdir(docsDir, { recursive: true });
+    vi.stubEnv("OPENCLAW_CONFIG_PATH", path.join(rootDir, "openclaw.json"));
+
+    try {
+      const cfg = asConfig({
+        agents: {
+          defaults: {
+            memorySearch: {
+              provider: "openai",
+            },
+          },
+        },
+      });
+      const resolved = resolveMemorySearchConfig(cfg, "main");
+      expect(resolved?.extraPaths).toContain(docsDir);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it("auto-discovers a sibling docs directory next to the configured state dir", async () => {
+    const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-rag-doc-state-"));
+    const stateDir = path.join(rootDir, "state");
+    const docsDir = path.join(rootDir, "docs");
+    await fs.mkdir(stateDir, { recursive: true });
+    await fs.mkdir(docsDir, { recursive: true });
+    vi.stubEnv("OPENCLAW_STATE_DIR", stateDir);
+
+    try {
+      const cfg = asConfig({
+        agents: {
+          defaults: {
+            memorySearch: {
+              provider: "openai",
+            },
+          },
+        },
+      });
+      const resolved = resolveMemorySearchConfig(cfg, "main");
+      expect(resolved?.extraPaths).toContain(docsDir);
+    } finally {
+      await fs.rm(rootDir, { recursive: true, force: true });
+    }
   });
 });

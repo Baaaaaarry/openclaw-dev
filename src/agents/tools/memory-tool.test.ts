@@ -3,7 +3,7 @@ import {
   resetMemoryToolMockState,
   setMemorySearchImpl,
 } from "../../../test/helpers/memory-tool-manager-mock.js";
-import { createMemorySearchTool } from "./memory-tool.js";
+import { createMemoryRecallTool, createMemorySearchTool } from "./memory-tool.js";
 
 describe("memory_search unavailable payloads", () => {
   beforeEach(() => {
@@ -53,6 +53,30 @@ describe("memory_search unavailable payloads", () => {
       error: "embedding provider timeout",
       warning: "Memory search is unavailable due to an embedding/provider error.",
       action: "Check embedding provider configuration and retry memory_search.",
+    });
+  });
+
+  it("exposes memory_recall with the same unavailable metadata shape", async () => {
+    setMemorySearchImpl(async () => {
+      throw new Error("embedding provider timeout");
+    });
+
+    const tool = createMemoryRecallTool({
+      config: { agents: { list: [{ id: "main", default: true }] } },
+    });
+    if (!tool) {
+      throw new Error("tool missing");
+    }
+
+    expect(tool.name).toBe("memory_recall");
+    const result = await tool.execute("generic", { query: "hello" });
+    expect(result.details).toEqual({
+      results: [],
+      disabled: true,
+      unavailable: true,
+      error: "embedding provider timeout",
+      warning: "Memory search is unavailable due to an embedding/provider error.",
+      action: "Check embedding provider configuration and retry memory_recall.",
     });
   });
 });

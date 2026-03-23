@@ -98,6 +98,14 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     includeInOpenClawGroup: true,
   },
   {
+    id: "memory_recall",
+    label: "memory_recall",
+    description: "Recall indexed docs",
+    sectionId: "memory",
+    profiles: ["coding"],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "memory_search",
     label: "memory_search",
     description: "Semantic search",

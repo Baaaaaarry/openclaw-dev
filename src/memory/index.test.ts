@@ -172,6 +172,27 @@ describe("memory index", () => {
     );
   });
 
+  it("indexes text documents from extraPaths", async () => {
+    await fs.mkdir(extraDir, { recursive: true });
+    await fs.writeFile(
+      path.join(extraDir, "deployment-notes.txt"),
+      "PGX deployment checklist\nbeta token retained",
+      "utf-8",
+    );
+
+    const cfg = createCfg({
+      storePath: indexExtraPath,
+      extraPaths: [extraDir],
+      hybrid: { enabled: true, vectorWeight: 0.5, textWeight: 0.5 },
+    });
+    const manager = await getPersistentManager(cfg);
+    await manager.sync({ reason: "test" });
+
+    const results = await manager.search("deployment checklist");
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0]?.path).toContain("deployment-notes.txt");
+  });
+
   it("keeps dirty false in status-only manager after prior indexing", async () => {
     const indexStatusPath = path.join(workspaceDir, `index-status-${Date.now()}.sqlite`);
     const cfg = createCfg({ storePath: indexStatusPath });
