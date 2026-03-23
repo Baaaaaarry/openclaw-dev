@@ -8,6 +8,11 @@ import {
   createMistralEmbeddingProvider,
   type MistralEmbeddingClient,
 } from "./embeddings-mistral.js";
+import {
+  createOllamaEmbeddingProvider,
+  type OllamaEmbeddingClient,
+  DEFAULT_OLLAMA_EMBEDDING_MODEL,
+} from "./embeddings-ollama.js";
 import { createOpenAiEmbeddingProvider, type OpenAiEmbeddingClient } from "./embeddings-openai.js";
 import { createVoyageEmbeddingProvider, type VoyageEmbeddingClient } from "./embeddings-voyage.js";
 import { importNodeLlamaCpp } from "./node-llama.js";
@@ -22,6 +27,7 @@ function sanitizeAndNormalizeEmbedding(vec: number[]): number[] {
 }
 
 export type { GeminiEmbeddingClient } from "./embeddings-gemini.js";
+export type { OllamaEmbeddingClient } from "./embeddings-ollama.js";
 export type { MistralEmbeddingClient } from "./embeddings-mistral.js";
 export type { OpenAiEmbeddingClient } from "./embeddings-openai.js";
 export type { VoyageEmbeddingClient } from "./embeddings-voyage.js";
@@ -34,7 +40,7 @@ export type EmbeddingProvider = {
   embedBatch: (texts: string[]) => Promise<number[][]>;
 };
 
-export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage" | "mistral";
+export type EmbeddingProviderId = "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama";
 export type EmbeddingProviderRequest = EmbeddingProviderId | "auto";
 export type EmbeddingProviderFallback = EmbeddingProviderId | "none";
 
@@ -48,6 +54,7 @@ export type EmbeddingProviderResult = {
   providerUnavailableReason?: string;
   openAi?: OpenAiEmbeddingClient;
   gemini?: GeminiEmbeddingClient;
+  ollama?: OllamaEmbeddingClient;
   voyage?: VoyageEmbeddingClient;
   mistral?: MistralEmbeddingClient;
 };
@@ -86,6 +93,22 @@ function canAutoSelectLocal(options: EmbeddingProviderOptions): boolean {
   } catch {
     return false;
   }
+}
+
+function canAutoSelectOllama(options: EmbeddingProviderOptions): boolean {
+  if (options.provider !== "auto") {
+    return false;
+  }
+  if (options.remote?.baseUrl?.trim()) {
+    return true;
+  }
+  if (options.config.models?.providers?.ollama) {
+    return true;
+  }
+  if ((process.env.OLLAMA_API_KEY ?? "").trim()) {
+    return true;
+  }
+  return options.model.trim().startsWith("ollama/");
 }
 
 function isMissingApiKeyError(err: unknown): boolean {
@@ -156,6 +179,10 @@ export async function createEmbeddingProvider(
       const { provider, client } = await createGeminiEmbeddingProvider(options);
       return { provider, gemini: client };
     }
+    if (id === "ollama") {
+      const { provider, client } = await createOllamaEmbeddingProvider(options);
+      return { provider, ollama: client };
+    }
     if (id === "voyage") {
       const { provider, client } = await createVoyageEmbeddingProvider(options);
       return { provider, voyage: client };
@@ -182,6 +209,13 @@ export async function createEmbeddingProvider(
       } catch (err) {
         localError = formatLocalSetupError(err);
       }
+    }
+
+    if (canAutoSelectOllama(options)) {
+      try {
+        const ollama = await createProvider("ollama");
+        return { ...ollama, requestedProvider };
+      } catch {}
     }
 
     for (const provider of REMOTE_EMBEDDING_PROVIDER_IDS) {
@@ -287,6 +321,7 @@ function formatLocalSetupError(err: unknown): string {
       ? "2) Reinstall OpenClaw (this should install node-llama-cpp): npm i -g openclaw@latest"
       : null,
     "3) If you use pnpm: pnpm approve-builds (select node-llama-cpp), then pnpm rebuild node-llama-cpp",
+    `Or set agents.defaults.memorySearch.provider = "ollama" with model "${DEFAULT_OLLAMA_EMBEDDING_MODEL}" (local Ollama embeddings).`,
     ...REMOTE_EMBEDDING_PROVIDER_IDS.map(
       (provider) => `Or set agents.defaults.memorySearch.provider = "${provider}" (remote).`,
     ),

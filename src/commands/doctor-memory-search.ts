@@ -39,6 +39,10 @@ export async function noteMemorySearchHealth(
     return;
   }
 
+  if (resolved.provider === "ollama") {
+    return;
+  }
+
   // If a specific provider is configured (not "auto"), check only that one.
   if (resolved.provider !== "auto") {
     if (resolved.provider === "local") {

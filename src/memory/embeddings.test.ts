@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as authModule from "../agents/model-auth.js";
 import { DEFAULT_GEMINI_EMBEDDING_MODEL } from "./embeddings-gemini.js";
+import { DEFAULT_OLLAMA_EMBEDDING_MODEL } from "./embeddings-ollama.js";
 import { createEmbeddingProvider, DEFAULT_LOCAL_MODEL } from "./embeddings.js";
 
 vi.mock("../agents/model-auth.js", async () => {
@@ -25,6 +26,13 @@ const createGeminiFetchMock = () =>
     ok: true,
     status: 200,
     json: async () => ({ embedding: { values: [1, 2, 3] } }),
+  }));
+
+const createOllamaFetchMock = () =>
+  vi.fn(async (_input?: unknown, _init?: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ embeddings: [[1, 2, 3]] }),
   }));
 
 function readFirstFetchRequest(fetchMock: { mock: { calls: unknown[][] } }) {
@@ -71,7 +79,7 @@ function createLocalProvider(options?: { fallback?: "none" | "openai" }) {
 
 function expectAutoSelectedProvider(
   result: Awaited<ReturnType<typeof createEmbeddingProvider>>,
-  expectedId: "openai" | "gemini" | "mistral",
+  expectedId: "openai" | "gemini" | "mistral" | "ollama",
 ) {
   expect(result.requestedProvider).toBe("auto");
   const provider = requireProvider(result);
@@ -329,6 +337,40 @@ describe("embedding provider auto selection", () => {
     await provider.embedQuery("hello");
     const [url] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("https://api.mistral.ai/v1/embeddings");
+  });
+
+  it("uses ollama when explicitly configured in provider config", async () => {
+    const fetchMock = createOllamaFetchMock();
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(authModule.resolveApiKeyForProvider).mockImplementation(async ({ provider }) => {
+      throw new Error(`No API key found for provider "${provider}".`);
+    });
+
+    const result = await createEmbeddingProvider({
+      config: {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://127.0.0.1:11434",
+            },
+          },
+        },
+      } as never,
+      provider: "auto",
+      model: "",
+      fallback: "none",
+    });
+
+    const provider = expectAutoSelectedProvider(result, "ollama");
+    await provider.embedQuery("hello");
+    const { url, init } = readFirstFetchRequest(fetchMock);
+    expect(url).toBe("http://127.0.0.1:11434/api/embed");
+    const payload = JSON.parse((init?.body as string | undefined) ?? "{}") as {
+      model?: string;
+      input?: unknown;
+    };
+    expect(payload.model).toBe(DEFAULT_OLLAMA_EMBEDDING_MODEL);
+    expect(payload.input).toBe("hello");
   });
 });
 

@@ -13,6 +13,7 @@ import {
   type EmbeddingProviderResult,
   type GeminiEmbeddingClient,
   type MistralEmbeddingClient,
+  type OllamaEmbeddingClient,
   type OpenAiEmbeddingClient,
   type VoyageEmbeddingClient,
 } from "./embeddings.js";
@@ -52,12 +53,20 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
   protected readonly workspaceDir: string;
   protected readonly settings: ResolvedMemorySearchConfig;
   protected provider: EmbeddingProvider | null;
-  private readonly requestedProvider: "openai" | "local" | "gemini" | "voyage" | "mistral" | "auto";
-  protected fallbackFrom?: "openai" | "local" | "gemini" | "voyage" | "mistral";
+  private readonly requestedProvider:
+    | "openai"
+    | "local"
+    | "gemini"
+    | "voyage"
+    | "mistral"
+    | "ollama"
+    | "auto";
+  protected fallbackFrom?: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama";
   protected fallbackReason?: string;
   private readonly providerUnavailableReason?: string;
   protected openAi?: OpenAiEmbeddingClient;
   protected gemini?: GeminiEmbeddingClient;
+  protected ollama?: OllamaEmbeddingClient;
   protected voyage?: VoyageEmbeddingClient;
   protected mistral?: MistralEmbeddingClient;
   protected batch: {
@@ -187,6 +196,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     this.providerUnavailableReason = params.providerResult.providerUnavailableReason;
     this.openAi = params.providerResult.openAi;
     this.gemini = params.providerResult.gemini;
+    this.ollama = params.providerResult.ollama;
     this.voyage = params.providerResult.voyage;
     this.mistral = params.providerResult.mistral;
     this.sources = new Set(params.settings.sources);
