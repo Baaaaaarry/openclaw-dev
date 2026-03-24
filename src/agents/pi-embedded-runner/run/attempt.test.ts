@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
 import {
+  formatAutoMemoryRecallContext,
   isOllamaCompatProvider,
   resolveAttemptFsWorkspaceOnly,
   resolveOllamaCompatNumCtxEnabled,
   resolvePromptBuildHookResult,
   resolvePromptModeForSession,
+  shouldAutoRecallMemoryForPrompt,
   shouldInjectOllamaCompatNumCtx,
   wrapOllamaCompatNumCtx,
   wrapStreamFnTrimToolCallNames,
@@ -53,6 +55,70 @@ describe("resolvePromptBuildHookResult", () => {
     expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledTimes(1);
     expect(hookRunner.runBeforeAgentStart).toHaveBeenCalledWith({ prompt: "hello", messages }, {});
     expect(result.prependContext).toBe("from-hook");
+  });
+});
+
+describe("shouldAutoRecallMemoryForPrompt", () => {
+  it("detects explicit local-doc prompts", () => {
+    expect(
+      shouldAutoRecallMemoryForPrompt(
+        "请根据本地文档 GPU llcc-test-step.txt 提供的测试方法实现驱动",
+      ),
+    ).toBe(true);
+    expect(shouldAutoRecallMemoryForPrompt("请参考 MEMORY.md 里的历史决定回答")).toBe(true);
+    expect(shouldAutoRecallMemoryForPrompt("docs 目录里关于配置项的说明是什么")).toBe(true);
+  });
+
+  it("ignores generic prompts without local-doc hints", () => {
+    expect(shouldAutoRecallMemoryForPrompt("写一个通用 Linux 内核驱动框架")).toBe(false);
+  });
+});
+
+describe("formatAutoMemoryRecallContext", () => {
+  it("formats recalled snippets and warns about extraPaths", () => {
+    const text = formatAutoMemoryRecallContext({
+      recallToolName: "memory_recall",
+      results: [
+        {
+          path: "../../docs/llcc-test-step.txt",
+          startLine: 3,
+          endLine: 8,
+          score: 0.9234,
+          snippet: "step 1\n\n\nstep 2",
+          source: "memory",
+        },
+      ],
+    });
+
+    expect(text).toContain("Runtime Memory Recall (automatic)");
+    expect(text).toContain("extraPaths");
+    expect(text).toContain("../../docs/llcc-test-step.txt#L3-L8");
+    expect(text).toContain("score 0.923");
+    expect(text).toContain("step 1\n\nstep 2");
+    expect(text).toContain("call memory_get");
+  });
+
+  it("formats empty recall results without claiming the file is missing", () => {
+    const text = formatAutoMemoryRecallContext({
+      recallToolName: "memory_search",
+      results: [],
+    });
+
+    expect(text).toContain("memory_search");
+    expect(text).toContain("no indexed matches");
+    expect(text).not.toContain("does not exist");
+    expect(text).toContain("Do not claim a file is missing from the workspace");
+  });
+
+  it("formats unavailable recall errors", () => {
+    const text = formatAutoMemoryRecallContext({
+      recallToolName: "memory_recall",
+      error: "embedding provider unavailable",
+    });
+
+    expect(text).toContain("memory_recall");
+    expect(text).toContain("embedding provider unavailable");
+    expect(text).toContain("recall was unavailable");
   });
 });
 

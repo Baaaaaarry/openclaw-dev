@@ -13,6 +13,8 @@ import type { OpenClawConfig } from "../../../config/config.js";
 import { getMachineDisplayName } from "../../../infra/machine-name.js";
 import { logLatencySegment } from "../../../logging/diagnostic.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
+import { getMemorySearchManager } from "../../../memory/index.js";
+import type { MemorySearchResult } from "../../../memory/types.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import type {
   PluginHookAgentContext,
@@ -42,6 +44,7 @@ import { isTimeoutError } from "../../failover-error.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
 import { wrapStreamFnLlmInference } from "../../llm-inference-trace.js";
 import { createLlmPayloadLogger } from "../../llm-payload-log.js";
+import { resolveMemorySearchConfig } from "../../memory-search.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { normalizeProviderId, resolveDefaultModelForAgent } from "../../model-selection.js";
 import { createOllamaPayloadLogger } from "../../ollama-payload-log.js";
@@ -130,6 +133,122 @@ type PromptBuildHookRunner = {
     ctx: PluginHookAgentContext,
   ) => Promise<PluginHookBeforeAgentStartResult | undefined>;
 };
+
+const AUTO_MEMORY_RECALL_MAX_RESULTS = 4;
+const AUTO_MEMORY_RECALL_MIN_SCORE = 0.15;
+const AUTO_MEMORY_RECALL_FILENAME_PATTERN =
+  /(?:^|[\s"'`(（【[])([A-Za-z0-9._/-]+\.(?:md|mdx|txt))(?:$|[\s"'`)）】\],.:;!?])/i;
+const AUTO_MEMORY_RECALL_HINT_PATTERNS = [
+  /\bmemory(?:\.md)?\b/i,
+  /\bmemory\/[A-Za-z0-9._/-]*/i,
+  /\bdocs?\b/i,
+  /\bextra\s*paths?\b/i,
+  /本地文档/i,
+  /文档目录/i,
+  /根据.*文档/i,
+  /参考.*文档/i,
+  /查阅.*文档/i,
+];
+
+function normalizeAutoRecallSnippet(snippet: string): string {
+  return snippet.trim().replace(/\n{3,}/g, "\n\n");
+}
+
+function formatMemoryRecallResult(entry: MemorySearchResult): string {
+  const lineRange =
+    entry.startLine === entry.endLine
+      ? `#L${entry.startLine}`
+      : `#L${entry.startLine}-L${entry.endLine}`;
+  return [`- ${entry.path}${lineRange} (score ${entry.score.toFixed(3)})`, entry.snippet].join(
+    "\n",
+  );
+}
+
+export function shouldAutoRecallMemoryForPrompt(prompt: string): boolean {
+  const normalized = prompt.trim();
+  if (!normalized) {
+    return false;
+  }
+  if (AUTO_MEMORY_RECALL_FILENAME_PATTERN.test(normalized)) {
+    return true;
+  }
+  return AUTO_MEMORY_RECALL_HINT_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function formatAutoMemoryRecallContext(params: {
+  recallToolName: "memory_recall" | "memory_search";
+  results?: MemorySearchResult[];
+  error?: string;
+}): string {
+  const lines = [
+    "## Runtime Memory Recall (automatic)",
+    `This prompt references local docs, MEMORY.md, or memorySearch.extraPaths, so OpenClaw already ran ${params.recallToolName} before the first model turn.`,
+    "Important: indexed docs may live outside the workspace via extraPaths. Do not claim a file is missing from the workspace just because it is not under workspaceDir.",
+  ];
+  if (params.error?.trim()) {
+    lines.push(
+      `Automatic recall was unavailable: ${params.error.trim()}. If needed, say recall was unavailable instead of asserting the file does not exist.`,
+      "",
+    );
+    return lines.join("\n");
+  }
+  if (!params.results?.length) {
+    lines.push(
+      "Automatic recall found no indexed matches for this prompt. If needed, say recall found no indexed matches rather than inventing a missing-file explanation.",
+      "",
+    );
+    return lines.join("\n");
+  }
+  lines.push("Use the recalled local snippets below as grounded context before answering:");
+  for (const entry of params.results) {
+    lines.push(
+      formatMemoryRecallResult({ ...entry, snippet: normalizeAutoRecallSnippet(entry.snippet) }),
+    );
+  }
+  lines.push(
+    "If you need more detail from one of these files, call memory_get with the returned path and line range before answering.",
+    "",
+  );
+  return lines.join("\n");
+}
+
+async function buildAutomaticMemoryRecallContext(params: {
+  prompt: string;
+  config?: OpenClawConfig;
+  sessionAgentId: string;
+  sessionKey?: string;
+  allowedToolNames: Set<string>;
+}): Promise<string | null> {
+  const recallToolName = params.allowedToolNames.has("memory_recall")
+    ? "memory_recall"
+    : params.allowedToolNames.has("memory_search")
+      ? "memory_search"
+      : null;
+  if (!recallToolName || !params.config || !shouldAutoRecallMemoryForPrompt(params.prompt)) {
+    return null;
+  }
+  if (!resolveMemorySearchConfig(params.config, params.sessionAgentId)) {
+    return null;
+  }
+  const { manager, error } = await getMemorySearchManager({
+    cfg: params.config,
+    agentId: params.sessionAgentId,
+  });
+  if (!manager) {
+    return formatAutoMemoryRecallContext({ recallToolName, error });
+  }
+  try {
+    const results = await manager.search(params.prompt, {
+      maxResults: AUTO_MEMORY_RECALL_MAX_RESULTS,
+      minScore: AUTO_MEMORY_RECALL_MIN_SCORE,
+      sessionKey: params.sessionKey,
+    });
+    return formatAutoMemoryRecallContext({ recallToolName, results });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return formatAutoMemoryRecallContext({ recallToolName, error: message });
+  }
+}
 
 export function isOllamaCompatProvider(model: {
   provider?: string;
@@ -1251,10 +1370,23 @@ export async function runEmbeddedAttempt(
           legacyBeforeAgentStartResult: params.legacyBeforeAgentStartResult,
         });
         {
+          const autoMemoryRecallContext = await buildAutomaticMemoryRecallContext({
+            prompt: params.prompt,
+            config: params.config,
+            sessionAgentId,
+            sessionKey: params.sessionKey,
+            allowedToolNames,
+          });
           if (hookResult?.prependContext) {
             effectivePrompt = `${hookResult.prependContext}\n\n${params.prompt}`;
             log.debug(
               `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
+            );
+          }
+          if (autoMemoryRecallContext) {
+            effectivePrompt = `${autoMemoryRecallContext}\n\n${effectivePrompt}`;
+            log.debug(
+              `memory recall: prepended runtime context (${autoMemoryRecallContext.length} chars)`,
             );
           }
           const legacySystemPrompt =
