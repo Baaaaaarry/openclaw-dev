@@ -771,12 +771,21 @@ export async function runEmbeddedAttempt(
     });
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
+    const autoMemoryRecallContext = await buildAutomaticMemoryRecallContext({
+      prompt: params.prompt,
+      config: params.config,
+      sessionAgentId,
+      sessionKey: params.sessionKey,
+      allowedToolNames,
+    });
 
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
       reasoningLevel: params.reasoningLevel ?? "off",
-      extraSystemPrompt: params.extraSystemPrompt,
+      extraSystemPrompt: [params.extraSystemPrompt?.trim(), autoMemoryRecallContext]
+        .filter((value) => typeof value === "string" && value.trim().length > 0)
+        .join("\n\n"),
       ownerNumbers: params.ownerNumbers,
       ownerDisplay: ownerDisplay.ownerDisplay,
       ownerDisplaySecret: ownerDisplay.ownerDisplaySecret,
@@ -1370,23 +1379,10 @@ export async function runEmbeddedAttempt(
           legacyBeforeAgentStartResult: params.legacyBeforeAgentStartResult,
         });
         {
-          const autoMemoryRecallContext = await buildAutomaticMemoryRecallContext({
-            prompt: params.prompt,
-            config: params.config,
-            sessionAgentId,
-            sessionKey: params.sessionKey,
-            allowedToolNames,
-          });
           if (hookResult?.prependContext) {
             effectivePrompt = `${hookResult.prependContext}\n\n${params.prompt}`;
             log.debug(
               `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
-            );
-          }
-          if (autoMemoryRecallContext) {
-            effectivePrompt = `${autoMemoryRecallContext}\n\n${effectivePrompt}`;
-            log.debug(
-              `memory recall: prepended runtime context (${autoMemoryRecallContext.length} chars)`,
             );
           }
           const legacySystemPrompt =
