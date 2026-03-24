@@ -218,23 +218,40 @@ async function buildAutomaticMemoryRecallContext(params: {
   sessionAgentId: string;
   sessionKey?: string;
   allowedToolNames: Set<string>;
+  runId: string;
+  sessionId: string;
 }): Promise<string | null> {
   const recallToolName = params.allowedToolNames.has("memory_recall")
     ? "memory_recall"
     : params.allowedToolNames.has("memory_search")
       ? "memory_search"
       : null;
-  if (!recallToolName || !params.config || !shouldAutoRecallMemoryForPrompt(params.prompt)) {
+  const shouldRecall = shouldAutoRecallMemoryForPrompt(params.prompt);
+  if (!recallToolName || !params.config || !shouldRecall) {
+    if (shouldRecall) {
+      log.debug(
+        `memory recall: skipped before search runId=${params.runId} sessionId=${params.sessionId} hasTool=${Boolean(recallToolName)} hasConfig=${Boolean(params.config)}`,
+      );
+    }
     return null;
   }
   if (!resolveMemorySearchConfig(params.config, params.sessionAgentId)) {
+    log.debug(
+      `memory recall: skipped due to disabled memorySearch runId=${params.runId} sessionId=${params.sessionId} agent=${params.sessionAgentId}`,
+    );
     return null;
   }
+  log.debug(
+    `memory recall: triggered runId=${params.runId} sessionId=${params.sessionId} agent=${params.sessionAgentId} tool=${recallToolName} promptChars=${params.prompt.length}`,
+  );
   const { manager, error } = await getMemorySearchManager({
     cfg: params.config,
     agentId: params.sessionAgentId,
   });
   if (!manager) {
+    log.warn(
+      `memory recall: manager unavailable runId=${params.runId} sessionId=${params.sessionId} agent=${params.sessionAgentId} error=${error ?? "unknown"}`,
+    );
     return formatAutoMemoryRecallContext({ recallToolName, error });
   }
   try {
@@ -243,9 +260,18 @@ async function buildAutomaticMemoryRecallContext(params: {
       minScore: AUTO_MEMORY_RECALL_MIN_SCORE,
       sessionKey: params.sessionKey,
     });
+    log.debug(
+      `memory recall: search completed runId=${params.runId} sessionId=${params.sessionId} agent=${params.sessionAgentId} hits=${results.length} paths=${results
+        .slice(0, AUTO_MEMORY_RECALL_MAX_RESULTS)
+        .map((entry) => entry.path)
+        .join(",")}`,
+    );
     return formatAutoMemoryRecallContext({ recallToolName, results });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    log.warn(
+      `memory recall: search failed runId=${params.runId} sessionId=${params.sessionId} agent=${params.sessionAgentId} error=${message}`,
+    );
     return formatAutoMemoryRecallContext({ recallToolName, error: message });
   }
 }
@@ -777,7 +803,14 @@ export async function runEmbeddedAttempt(
       sessionAgentId,
       sessionKey: params.sessionKey,
       allowedToolNames,
+      runId: params.runId,
+      sessionId: params.sessionId,
     });
+    if (autoMemoryRecallContext) {
+      log.debug(
+        `memory recall: injecting into system prompt runId=${params.runId} sessionId=${params.sessionId} contextChars=${autoMemoryRecallContext.length}`,
+      );
+    }
 
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
