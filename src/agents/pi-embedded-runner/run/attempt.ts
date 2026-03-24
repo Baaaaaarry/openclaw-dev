@@ -176,13 +176,17 @@ export function shouldAutoRecallMemoryForPrompt(prompt: string): boolean {
 }
 
 export function formatAutoMemoryRecallContext(params: {
-  recallToolName: "memory_recall" | "memory_search";
+  recallToolName: "memory_recall" | "memory_search" | "automatic-memory-recall";
   results?: MemorySearchResult[];
   error?: string;
 }): string {
+  const recallLabel =
+    params.recallToolName === "automatic-memory-recall"
+      ? "automatic memory recall"
+      : params.recallToolName;
   const lines = [
     "## Runtime Memory Recall (automatic)",
-    `This prompt references local docs, MEMORY.md, or memorySearch.extraPaths, so OpenClaw already ran ${params.recallToolName} before the first model turn.`,
+    `This prompt references local docs, MEMORY.md, or memorySearch.extraPaths, so OpenClaw already ran ${recallLabel} before the first model turn.`,
     "Important: indexed docs may live outside the workspace via extraPaths. Do not claim a file is missing from the workspace just because it is not under workspaceDir.",
   ];
   if (params.error?.trim()) {
@@ -225,12 +229,12 @@ async function buildAutomaticMemoryRecallContext(params: {
     ? "memory_recall"
     : params.allowedToolNames.has("memory_search")
       ? "memory_search"
-      : null;
+      : "automatic-memory-recall";
   const shouldRecall = shouldAutoRecallMemoryForPrompt(params.prompt);
-  if (!recallToolName || !params.config || !shouldRecall) {
+  if (!params.config || !shouldRecall) {
     if (shouldRecall) {
       log.debug(
-        `memory recall: skipped before search runId=${params.runId} sessionId=${params.sessionId} hasTool=${Boolean(recallToolName)} hasConfig=${Boolean(params.config)}`,
+        `memory recall: skipped before search runId=${params.runId} sessionId=${params.sessionId} hasTool=${recallToolName !== "automatic-memory-recall"} hasConfig=${Boolean(params.config)}`,
       );
     }
     return null;
