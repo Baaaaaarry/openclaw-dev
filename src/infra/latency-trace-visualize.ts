@@ -1,5 +1,10 @@
 import type { HardwareTraceSample } from "./hardware-trace.js";
-import type { LatencyAggregateReport, LatencyMessageSummary } from "./latency-trace-report.js";
+import type {
+  HardwareWindowSummary,
+  LatencyAggregateReport,
+  LatencyMessageSummary,
+  RagComparisonGroupSummary,
+} from "./latency-trace-report.js";
 
 type RenderLatencyReportHtmlOptions = {
   report: LatencyAggregateReport;
@@ -81,6 +86,13 @@ function formatMiB(value: number | undefined): string {
     return "N/A";
   }
   return `${value.toFixed(1)} MiB`;
+}
+
+function formatMHz(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+  return `${value.toFixed(0)} MHz`;
 }
 
 function formatUnit(unit: string, value: number | undefined): string {
@@ -178,6 +190,7 @@ function renderDownloadButtons(): string {
 function renderPerMessageButtons(index: number): string {
   return `
     <div class="download-row small">
+      <button class="dl-btn" data-download="message-timeline-svg" data-message-index="${index}">Download timeline SVG</button>
       <button class="dl-btn" data-download="message-json" data-message-index="${index}">Download message JSON</button>
       <button class="dl-btn" data-download="message-csv" data-message-index="${index}">Download message CSV</button>
     </div>`;
@@ -193,6 +206,8 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
     "t2_ms",
     "t3_ms",
     "t4_ms",
+    "t4_rag_ms",
+    "t4_rag_results",
     "t5_calls",
     "t5_ttft_first_ms",
     "t5_ttft_sum_ms",
@@ -214,6 +229,30 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
     "hardware_gpu_util_avg_pct",
     "hardware_gpu_mem_util_avg_pct",
     "hardware_gpu_power_avg_w",
+    "rag_sample_count",
+    "rag_cpu_util_avg_pct",
+    "rag_cpu_util_max_pct",
+    "rag_gpu_util_avg_pct",
+    "rag_gpu_util_max_pct",
+    "rag_gpu_mem_util_avg_pct",
+    "rag_gpu_mem_util_max_pct",
+    "rag_gpu_power_avg_w",
+    "rag_gpu_power_max_w",
+    "rag_gpu_mem_clock_avg_mhz",
+    "rag_gpu_mem_clock_max_mhz",
+    "rag_compute_placement",
+    "llm_sample_count",
+    "llm_cpu_util_avg_pct",
+    "llm_cpu_util_max_pct",
+    "llm_gpu_util_avg_pct",
+    "llm_gpu_util_max_pct",
+    "llm_gpu_mem_util_avg_pct",
+    "llm_gpu_mem_util_max_pct",
+    "llm_gpu_power_avg_w",
+    "llm_gpu_power_max_w",
+    "llm_gpu_mem_clock_avg_mhz",
+    "llm_gpu_mem_clock_max_mhz",
+    "llm_compute_placement",
     "t6_first_ms",
     "t6_final_ms",
     "e2e_local_first_ms",
@@ -229,6 +268,8 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
       message.t2GatewayEnqueueMs,
       message.t3WorkerQueueWaitMs,
       message.t4AgentPreprocessMs,
+      message.t4RagRecallMs,
+      message.t4RagRecallResults,
       message.t5LlmCallCount,
       message.t5LlmTtftMs,
       message.t5LlmTtftSumMs,
@@ -250,6 +291,30 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
       message.hardwareGpuUtilAvgPct,
       message.hardwareGpuMemUtilAvgPct,
       message.hardwareGpuPowerAvgW,
+      message.hardwareRag?.sampleCount,
+      message.hardwareRag?.cpuUtilAvgPct,
+      message.hardwareRag?.cpuUtilMaxPct,
+      message.hardwareRag?.gpuUtilAvgPct,
+      message.hardwareRag?.gpuUtilMaxPct,
+      message.hardwareRag?.gpuMemUtilAvgPct,
+      message.hardwareRag?.gpuMemUtilMaxPct,
+      message.hardwareRag?.gpuPowerAvgW,
+      message.hardwareRag?.gpuPowerMaxW,
+      message.hardwareRag?.gpuMemClockAvgMHz,
+      message.hardwareRag?.gpuMemClockMaxMHz,
+      message.hardwareRag?.computePlacement,
+      message.hardwareLlm?.sampleCount,
+      message.hardwareLlm?.cpuUtilAvgPct,
+      message.hardwareLlm?.cpuUtilMaxPct,
+      message.hardwareLlm?.gpuUtilAvgPct,
+      message.hardwareLlm?.gpuUtilMaxPct,
+      message.hardwareLlm?.gpuMemUtilAvgPct,
+      message.hardwareLlm?.gpuMemUtilMaxPct,
+      message.hardwareLlm?.gpuPowerAvgW,
+      message.hardwareLlm?.gpuPowerMaxW,
+      message.hardwareLlm?.gpuMemClockAvgMHz,
+      message.hardwareLlm?.gpuMemClockMaxMHz,
+      message.hardwareLlm?.computePlacement,
       message.t6FeishuFirstAckMs,
       message.t6FeishuFinalAckMs,
       message.localFirstVisibleMs,
@@ -353,6 +418,8 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
       const rows = [
         ["Message", String(message.messageId ?? "N/A")],
         ["Run", String(message.runId ?? "N/A")],
+        ["T4 RAG Recall", formatMs(message.t4RagRecallMs)],
+        ["RAG Hits", formatCount(message.t4RagRecallResults)],
         ["Calls", formatCount(message.t5LlmCallCount)],
         ["Input Tokens", formatCount(message.t5InputTokens)],
         ["Output Tokens", formatCount(message.t5OutputTokens)],
@@ -386,6 +453,11 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
           ${renderStageBar(message)}
           ${renderPerMessageButtons(index)}
           <div class="message-grid">${rows}</div>
+          <div class="message-hardware-grid">
+            ${renderHardwareWindowCard("RAG Recall Hardware", message.hardwareRag)}
+            ${renderHardwareWindowCard("LLM Inference Hardware", message.hardwareLlm)}
+            ${renderHardwareWindowCard("Overall Message Hardware", message.hardwareOverall)}
+          </div>
         </article>`;
     })
     .join("");
@@ -399,12 +471,21 @@ function renderMessageMetricsTable(messages: LatencyMessageSummary[]): string {
         <td>${escapeHtml(String(message.messageId ?? "N/A"))}</td>
         <td>${escapeHtml(formatMs(message.localFirstVisibleMs))}</td>
         <td>${escapeHtml(formatMs(message.localCompleteMs))}</td>
+        <td>${escapeHtml(formatMs(message.t4RagRecallMs))}</td>
+        <td>${escapeHtml(formatCount(message.t4RagRecallResults))}</td>
+        <td>${escapeHtml(message.hardwareRag?.computePlacement ?? "N/A")}</td>
         <td>${escapeHtml(formatCount(message.t5LlmCallCount))}</td>
+        <td>${escapeHtml(message.hardwareLlm?.computePlacement ?? "N/A")}</td>
         <td>${escapeHtml(formatCount(message.t5InputTokens))}</td>
         <td>${escapeHtml(formatCount(message.t5OutputTokens))}</td>
         <td>${escapeHtml(formatCount(message.t5PrefillTokensPerSec))}</td>
         <td>${escapeHtml(formatCount(message.t5DecodeTokensPerSec))}</td>
+        <td>${escapeHtml(formatPct(message.hardwareRag?.cpuUtilAvgPct))}</td>
+        <td>${escapeHtml(formatPct(message.hardwareRag?.gpuUtilAvgPct))}</td>
+        <td>${escapeHtml(formatPct(message.hardwareRag?.gpuMemUtilAvgPct))}</td>
+        <td>${escapeHtml(formatWatts(message.hardwareRag?.gpuPowerAvgW))}</td>
         <td>${escapeHtml(formatPct(message.hardwareGpuUtilAvgPct))}</td>
+        <td>${escapeHtml(formatPct(message.hardwareGpuMemUtilAvgPct))}</td>
         <td>${escapeHtml(formatWatts(message.hardwareGpuPowerAvgW))}</td>
       </tr>`,
     )
@@ -416,17 +497,131 @@ function renderMessageMetricsTable(messages: LatencyMessageSummary[]): string {
         <th>Message</th>
         <th>E2E First</th>
         <th>E2E Complete</th>
+        <th>T4 RAG</th>
+        <th>RAG Hits</th>
+        <th>RAG Placement</th>
         <th>Calls</th>
+        <th>LLM Placement</th>
         <th>Input</th>
         <th>Output</th>
         <th>Prefill TPS</th>
         <th>Decode TPS</th>
+        <th>RAG CPU Avg</th>
+        <th>RAG GPU Avg</th>
+        <th>RAG GPU Mem Avg</th>
+        <th>RAG GPU Power Avg</th>
         <th>GPU Util</th>
+        <th>GPU Mem Util</th>
         <th>GPU Power</th>
       </tr>
     </thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+function renderHardwareWindowCard(title: string, summary?: HardwareWindowSummary): string {
+  const rows: Array<[string, string, string]> = [
+    ["Samples", formatCount(summary?.sampleCount), "N/A"],
+    ["CPU Util", formatPct(summary?.cpuUtilAvgPct), formatPct(summary?.cpuUtilMaxPct)],
+    ["System Mem Util", formatPct(summary?.memUtilAvgPct), formatPct(summary?.memUtilMaxPct)],
+    ["GPU Util", formatPct(summary?.gpuUtilAvgPct), formatPct(summary?.gpuUtilMaxPct)],
+    [
+      "GPU Mem Util (bandwidth proxy)",
+      formatPct(summary?.gpuMemUtilAvgPct),
+      formatPct(summary?.gpuMemUtilMaxPct),
+    ],
+    ["GPU Power", formatWatts(summary?.gpuPowerAvgW), formatWatts(summary?.gpuPowerMaxW)],
+    [
+      "GPU Mem Used",
+      formatMiB(summary?.gpuMemoryUsedAvgMiB),
+      formatMiB(summary?.gpuMemoryUsedMaxMiB),
+    ],
+    ["GPU SM Clock", formatMHz(summary?.gpuSmClockAvgMHz), formatMHz(summary?.gpuSmClockMaxMHz)],
+    [
+      "GPU Mem Clock (bandwidth proxy)",
+      formatMHz(summary?.gpuMemClockAvgMHz),
+      formatMHz(summary?.gpuMemClockMaxMHz),
+    ],
+    ["GPU Temp", formatUnit("C", summary?.gpuTempAvgC), formatUnit("C", summary?.gpuTempMaxC)],
+    ["Placement", summary?.computePlacement ?? "N/A", "N/A"],
+  ];
+  return `
+    <section class="mini-panel">
+      <div class="mini-panel-title">${escapeHtml(title)}</div>
+      <table class="compact-table">
+        <thead><tr><th>Metric</th><th>Avg</th><th>Max</th></tr></thead>
+        <tbody>${rows
+          .map(
+            ([label, avg, max]) =>
+              `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(avg)}</td><td>${escapeHtml(max)}</td></tr>`,
+          )
+          .join("")}</tbody>
+      </table>
+    </section>`;
+}
+
+function renderRagComparisonRow(label: string, summary: RagComparisonGroupSummary): string {
+  return `<tr>
+    <td>${escapeHtml(label)}</td>
+    <td>${summary.count}</td>
+    <td>${escapeHtml(formatMs(summary.e2eLocalCompleteAvgMs))}</td>
+    <td>${escapeHtml(formatMs(summary.e2eLocalCompleteMaxMs))}</td>
+    <td>${escapeHtml(formatMs(summary.t4RagRecallAvgMs))}</td>
+    <td>${escapeHtml(formatMs(summary.t5LlmTotalAvgMs))}</td>
+    <td>${escapeHtml(formatCount(summary.t5InputTokensAvg))}</td>
+    <td>${escapeHtml(formatCount(summary.t5DecodeTpsAvg))}</td>
+    <td>${escapeHtml(formatPct(summary.ragCpuAvgPct))}</td>
+    <td>${escapeHtml(formatPct(summary.ragGpuAvgPct))}</td>
+    <td>${escapeHtml(formatPct(summary.ragGpuMemUtilAvgPct))}</td>
+    <td>${escapeHtml(formatWatts(summary.ragGpuPowerAvgW))}</td>
+    <td>${escapeHtml(formatMHz(summary.ragGpuMemClockAvgMHz))}</td>
+    <td>${escapeHtml(summary.ragPlacement ?? "N/A")}</td>
+    <td>${escapeHtml(formatPct(summary.llmCpuAvgPct))}</td>
+    <td>${escapeHtml(formatPct(summary.llmGpuAvgPct))}</td>
+    <td>${escapeHtml(formatPct(summary.llmGpuMemUtilAvgPct))}</td>
+    <td>${escapeHtml(formatWatts(summary.llmGpuPowerAvgW))}</td>
+    <td>${escapeHtml(formatMHz(summary.llmGpuMemClockAvgMHz))}</td>
+    <td>${escapeHtml(summary.llmPlacement ?? "N/A")}</td>
+  </tr>`;
+}
+
+function renderRagComparisonSection(report: LatencyAggregateReport): string {
+  const comparison = report.comparisons.ragVsNoRag;
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>RAG vs No-RAG Comparison</h2>
+      <p class="section-note">RAG hardware focuses on the automatic recall window before the first model turn. GPU memory utilization and memory clock act as bandwidth proxies when direct bandwidth counters are unavailable.</p>
+      <table class="series-table">
+        <thead>
+          <tr>
+            <th>Group</th>
+            <th>Count</th>
+            <th>E2E Avg</th>
+            <th>E2E Max</th>
+            <th>RAG Avg</th>
+            <th>LLM Avg</th>
+            <th>Input Avg</th>
+            <th>Decode TPS Avg</th>
+            <th>RAG CPU Avg</th>
+            <th>RAG GPU Avg</th>
+            <th>RAG GPU Mem Avg</th>
+            <th>RAG GPU Power Avg</th>
+            <th>RAG Mem Clock Avg</th>
+            <th>RAG Placement</th>
+            <th>LLM CPU Avg</th>
+            <th>LLM GPU Avg</th>
+            <th>LLM GPU Mem Avg</th>
+            <th>LLM GPU Power Avg</th>
+            <th>LLM Mem Clock Avg</th>
+            <th>LLM Placement</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${renderRagComparisonRow("RAG", comparison.rag)}
+          ${renderRagComparisonRow("No RAG", comparison.noRag)}
+        </tbody>
+      </table>
+    </section>`;
 }
 
 function renderAggregateSection(report: LatencyAggregateReport): string {
@@ -543,7 +738,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
       },
       {
         id: `gpu-${gpuIndex}-mem-util`,
-        title: `${gpuLabel} Memory Utilization`,
+        title: `${gpuLabel} Memory Utilization (bandwidth proxy)`,
         unit: "%",
         points: samples.map((sample) => ({
           x: toX(sample.epochMs),
@@ -593,7 +788,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
       },
       {
         id: `gpu-${gpuIndex}-mem-clock`,
-        title: `${gpuLabel} Memory Clock`,
+        title: `${gpuLabel} Memory Clock (bandwidth proxy)`,
         unit: "MHz",
         points: samples.map((sample) => ({
           x: toX(sample.epochMs),
@@ -625,6 +820,24 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
     );
   }
   return metrics;
+}
+
+function summarizeChartMetric(metric: ChartMetric): {
+  avg?: number;
+  max?: number;
+  latest?: number;
+} {
+  const values = metric.points
+    .map((point) => point.y)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length === 0) {
+    return {};
+  }
+  return {
+    avg: values.reduce((sum, value) => sum + value, 0) / values.length,
+    max: Math.max(...values),
+    latest: values.at(-1),
+  };
 }
 
 function renderChartSvg(metric: ChartMetric): string {
@@ -671,13 +884,27 @@ function renderChartSvg(metric: ChartMetric): string {
 
 function renderHardwareSection(samples: HardwareTraceSample[]): string {
   const metrics = collectHardwareMetrics(samples);
+  const rows = metrics
+    .map((metric) => {
+      const summary = summarizeChartMetric(metric);
+      return `<tr>
+        <td>${escapeHtml(metric.title)}</td>
+        <td>${escapeHtml(formatUnit(metric.unit, summary.avg))}</td>
+        <td>${escapeHtml(formatUnit(metric.unit, summary.max))}</td>
+        <td>${escapeHtml(formatUnit(metric.unit, summary.latest))}</td>
+      </tr>`;
+    })
+    .join("");
   const cards = metrics
     .map(
       (metric) => `
-        <article class="chart-card">
+        <article class="chart-card" data-chart-id="${escapeHtml(metric.id)}">
           <div class="chart-header">
             <div class="chart-title">${escapeHtml(metric.title)}</div>
             <div class="chart-subtitle">${escapeHtml(metric.unit)}</div>
+          </div>
+          <div class="download-row small">
+            <button class="dl-btn" data-download="chart-svg" data-chart-id="${escapeHtml(metric.id)}">Download chart SVG</button>
           </div>
           ${renderChartSvg(metric)}
         </article>`,
@@ -686,8 +913,12 @@ function renderHardwareSection(samples: HardwareTraceSample[]): string {
   return `
     <section class="panel" style="margin-top:20px">
       <h2>Hardware Timeline</h2>
-      <p class="section-note">Raw hardware samples across the captured period. Missing metrics stay visible as N/A rather than being hidden.</p>
+      <p class="section-note">Raw hardware samples across the captured period. Missing metrics stay visible as N/A rather than being hidden. GPU memory utilization and memory clock are shown as bandwidth proxies.</p>
       ${renderDownloadButtons()}
+      <table class="series-table">
+        <thead><tr><th>Metric</th><th>Avg</th><th>Max</th><th>Latest</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
       <div class="chart-grid">${cards}</div>
     </section>`;
 }
@@ -772,9 +1003,14 @@ export function renderLatencyReportHtml(
     .segment { height: 100%; }
     .segment.empty { width: 100%; background: rgba(148,163,184,0.16); }
     .message-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 18px; }
+    .message-hardware-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 14px; }
     .meta-row { display: flex; justify-content: space-between; gap: 10px; border-top: 1px dashed rgba(148,163,184,0.2); padding-top: 6px; }
     .meta-label { color: var(--muted); }
     .meta-value { font-weight: 600; }
+    .mini-panel { border: 1px solid var(--line); border-radius: 16px; padding: 12px; background: rgba(255,255,255,0.62); }
+    .mini-panel-title { font-weight: 700; margin-bottom: 8px; }
+    .compact-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .compact-table th, .compact-table td { padding: 6px 8px; border-bottom: 1px solid rgba(148,163,184,0.14); text-align: left; }
     .series-table { width: 100%; border-collapse: collapse; overflow: hidden; border-radius: 16px; background: rgba(255,255,255,0.76); margin-top: 14px; }
     .series-table th, .series-table td { padding: 10px 12px; border-bottom: 1px solid rgba(148,163,184,0.16); text-align: left; }
     .series-table th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
@@ -824,6 +1060,7 @@ export function renderLatencyReportHtml(
       ${renderMessageMetricsTable(report.messages)}
     </section>
 
+    ${renderRagComparisonSection(report)}
     ${renderHardwareSection(hardwareSamples)}
     ${avgMode ? renderAggregateSection(report) : ""}
     ${renderNotes()}
@@ -851,10 +1088,59 @@ export function renderLatencyReportHtml(
       const headers = Object.keys(message);
       const row = headers.map((key) => {
         const value = message[key];
-        const text = value == null ? "" : String(value);
+        const text =
+          typeof value === "string"
+            ? value
+            : typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+              ? String(value)
+              : value == null
+                ? ""
+                : JSON.stringify(value);
         return /[",\\n]/.test(text) ? '"' + text.replaceAll('"', '""') + '"' : text;
       });
       return headers.join(",") + "\\n" + row.join(",");
+    }
+
+    const MESSAGE_TIMELINE_COLORS = {
+      t1: "#0f766e",
+      t2: "#0ea5e9",
+      t3: "#8b5cf6",
+      t4: "#d97706",
+      load: "#ef4444",
+      prefill: "#f59e0b",
+      decode: "#22c55e",
+      residual: "#64748b",
+      t6: "#ec4899",
+    };
+
+    function buildMessageTimelineSvg(message) {
+      const total = Number.isFinite(message.localCompleteMs) && message.localCompleteMs > 0 ? message.localCompleteMs : 1;
+      const residual = Number.isFinite(message.t5LlmTotalMs)
+        ? Math.max(0, message.t5LlmTotalMs - (message.t5LlmLoadMs || 0) - (message.t5LlmPrefillMs || 0) - (message.t5LlmDecodeMs || 0))
+        : 0;
+      const segments = [
+        ["T1", message.t1FeishuInboundMs, MESSAGE_TIMELINE_COLORS.t1],
+        ["T2", message.t2GatewayEnqueueMs, MESSAGE_TIMELINE_COLORS.t2],
+        ["T3", message.t3WorkerQueueWaitMs, MESSAGE_TIMELINE_COLORS.t3],
+        ["T4", message.t4AgentPreprocessMs, MESSAGE_TIMELINE_COLORS.t4],
+        ["Load", message.t5LlmLoadMs, MESSAGE_TIMELINE_COLORS.load],
+        ["Prefill", message.t5LlmPrefillMs, MESSAGE_TIMELINE_COLORS.prefill],
+        ["Decode", message.t5LlmDecodeMs, MESSAGE_TIMELINE_COLORS.decode],
+        ["Residual", residual, MESSAGE_TIMELINE_COLORS.residual],
+        ["T6", message.t6FeishuFinalAckMs, MESSAGE_TIMELINE_COLORS.t6],
+      ].filter(([, value]) => Number.isFinite(value) && value > 0);
+      let cursor = 0;
+      const rects = segments.map(([label, value, color]) => {
+        const width = Math.max(1, (value / total) * 1160);
+        const rect = '<rect x="' + cursor.toFixed(1) + '" y="0" width="' + width.toFixed(1) + '" height="60" fill="' + color + '"><title>' + label + ': ' + value.toFixed(1) + ' ms</title></rect>';
+        cursor += width;
+        return rect;
+      }).join("");
+      return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 92" width="1160" height="92"><rect width="1160" height="92" fill="#ffffff"/><g transform="translate(12,16)">' + rects + '</g><text x="12" y="86" font-family="Helvetica Neue, Arial, sans-serif" font-size="14" fill="#334155">E2E complete: ' + total.toFixed(1) + ' ms</text></svg>';
+    }
+
+    function downloadSvg(filename, svg) {
+      downloadText(filename, svg, "image/svg+xml;charset=utf-8");
     }
 
     document.querySelectorAll("[data-download]").forEach((button) => {
@@ -881,9 +1167,22 @@ export function renderLatencyReportHtml(
           downloadText("message-" + index + ".json", JSON.stringify(MESSAGES[index], null, 2), "application/json");
           return;
         }
+        if (type === "message-timeline-svg") {
+          const index = Number(button.getAttribute("data-message-index"));
+          downloadSvg("message-" + index + "-timeline.svg", buildMessageTimelineSvg(MESSAGES[index]));
+          return;
+        }
         if (type === "message-csv") {
           const index = Number(button.getAttribute("data-message-index"));
           downloadText("message-" + index + ".csv", messageToCsv(MESSAGES[index]), "text/csv;charset=utf-8");
+          return;
+        }
+        if (type === "chart-svg") {
+          const chartId = button.getAttribute("data-chart-id");
+          const svg = chartId ? document.querySelector('[data-chart-id="' + chartId + '"] svg') : null;
+          if (svg) {
+            downloadSvg(chartId + ".svg", svg.outerHTML);
+          }
         }
       });
     });

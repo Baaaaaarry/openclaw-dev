@@ -150,6 +150,15 @@ const AUTO_MEMORY_RECALL_HINT_PATTERNS = [
   /查阅.*文档/i,
 ];
 
+type AutomaticMemoryRecallResult = {
+  context: string;
+  resultsCount: number;
+  startedAtMs: number;
+  endedAtMs: number;
+  durationMs: number;
+  mode: "results" | "empty" | "unavailable";
+};
+
 function normalizeAutoRecallSnippet(snippet: string): string {
   return snippet.trim().replace(/\n{3,}/g, "\n\n");
 }
@@ -222,7 +231,7 @@ async function buildAutomaticMemoryRecallContext(params: {
   sessionAgentId: string;
   sessionKey?: string;
   allowedToolNames: Set<string>;
-}): Promise<string | null> {
+}): Promise<AutomaticMemoryRecallResult | null> {
   const recallToolName = params.allowedToolNames.has("memory_recall")
     ? "memory_recall"
     : params.allowedToolNames.has("memory_search")
@@ -239,8 +248,17 @@ async function buildAutomaticMemoryRecallContext(params: {
     cfg: params.config,
     agentId: params.sessionAgentId,
   });
+  const startedAtMs = Date.now();
   if (!manager) {
-    return formatAutoMemoryRecallContext({ recallToolName, error });
+    const endedAtMs = Date.now();
+    return {
+      context: formatAutoMemoryRecallContext({ recallToolName, error }),
+      resultsCount: 0,
+      startedAtMs,
+      endedAtMs,
+      durationMs: Math.max(0, endedAtMs - startedAtMs),
+      mode: "unavailable",
+    };
   }
   try {
     const results = await manager.search(params.prompt, {
@@ -248,10 +266,26 @@ async function buildAutomaticMemoryRecallContext(params: {
       minScore: AUTO_MEMORY_RECALL_MIN_SCORE,
       sessionKey: params.sessionKey,
     });
-    return formatAutoMemoryRecallContext({ recallToolName, results });
+    const endedAtMs = Date.now();
+    return {
+      context: formatAutoMemoryRecallContext({ recallToolName, results }),
+      resultsCount: results.length,
+      startedAtMs,
+      endedAtMs,
+      durationMs: Math.max(0, endedAtMs - startedAtMs),
+      mode: results.length > 0 ? "results" : "empty",
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return formatAutoMemoryRecallContext({ recallToolName, error: message });
+    const endedAtMs = Date.now();
+    return {
+      context: formatAutoMemoryRecallContext({ recallToolName, error: message }),
+      resultsCount: 0,
+      startedAtMs,
+      endedAtMs,
+      durationMs: Math.max(0, endedAtMs - startedAtMs),
+      mode: "unavailable",
+    };
   }
 }
 
@@ -776,19 +810,39 @@ export async function runEmbeddedAttempt(
     });
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
-    const autoMemoryRecallContext = await buildAutomaticMemoryRecallContext({
+    const autoMemoryRecall = await buildAutomaticMemoryRecallContext({
       prompt: params.prompt,
       config: params.config,
       sessionAgentId,
       sessionKey: params.sessionKey,
       allowedToolNames,
     });
+    if (autoMemoryRecall) {
+      logLatencySegment({
+        segment: "t4_agent_preprocess",
+        stage: "rag_recall",
+        durationMs: autoMemoryRecall.durationMs,
+        startedAtMs: autoMemoryRecall.startedAtMs,
+        endedAtMs: autoMemoryRecall.endedAtMs,
+        channel: params.latencyTrace?.channel ?? params.messageChannel ?? params.messageProvider,
+        accountId: params.latencyTrace?.accountId ?? params.agentAccountId,
+        chatId: params.latencyTrace?.chatId ?? params.messageTo,
+        messageId: params.latencyTrace?.messageId ?? params.currentMessageId,
+        sessionKey: params.latencyTrace?.sessionKey ?? params.sessionKey,
+        sessionId: params.latencyTrace?.sessionId ?? params.sessionId,
+        runId: params.latencyTrace?.runId ?? params.runId,
+        provider: params.provider,
+        model: params.modelId,
+        source: `auto:${autoMemoryRecall.mode}`,
+        totalTokens: autoMemoryRecall.resultsCount,
+      });
+    }
 
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
       reasoningLevel: params.reasoningLevel ?? "off",
-      extraSystemPrompt: [params.extraSystemPrompt?.trim(), autoMemoryRecallContext]
+      extraSystemPrompt: [params.extraSystemPrompt?.trim(), autoMemoryRecall?.context]
         .filter((value) => typeof value === "string" && value.trim().length > 0)
         .join("\n\n"),
       ownerNumbers: params.ownerNumbers,
