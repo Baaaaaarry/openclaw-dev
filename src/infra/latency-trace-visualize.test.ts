@@ -37,6 +37,8 @@ describe("latency-trace-visualize", () => {
           t6FeishuFinalAckMs: 70,
           localFirstVisibleMs: 260,
           localCompleteMs: 670,
+          overallWindowStartedAtMs: 1_000,
+          overallWindowEndedAtMs: 2_000,
           hardwareRag: {
             sampleCount: 1,
             cpuUtilAvgPct: 30,
@@ -107,15 +109,32 @@ describe("latency-trace-visualize", () => {
 
     const html = renderLatencyReportHtml({
       report,
-      hardwareSamples: [],
+      hardwareSamples: [
+        {
+          ts: "2026-01-01T00:00:01.200Z",
+          epochMs: 1_200,
+          cpuUtilPct: 32,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 30,
+          memUsedBytes: 70,
+          memUtilPct: 70,
+          gpus: [{ index: 0, utilizationGpuPct: 82 }],
+        },
+      ],
     });
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("OpenClaw Latency Dashboard");
     expect(html).toContain("Per-message Timeline");
     expect(html).toContain("msg1");
-    expect(html).toContain("Per-message Metrics Table");
+    expect(html).toContain("CPU Utilization (T1-T6 Interval)");
+    expect(html).toContain("GPU Utilization (T1-T6 Interval)");
     expect(html).toContain("RAG vs No-RAG Comparison");
     expect(html).toContain("Download timeline SVG");
+    expect(html).toContain("Download CPU SVG");
+    expect(html).toContain("Download GPU SVG");
     expect(html).not.toContain("Aggregate Summary");
   });
 

@@ -25,6 +25,12 @@ type ChartMetric = {
   points: Array<{ x: number; y?: number }>;
 };
 
+type MetricSummary = {
+  avg?: number;
+  max?: number;
+  latest?: number;
+};
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -115,6 +121,16 @@ function formatUnit(unit: string, value: number | undefined): string {
   }
 }
 
+function deriveGpuUtilForSample(sample: HardwareTraceSample): number | undefined {
+  const values = (sample.gpus ?? [])
+    .map((gpu) => gpu.utilizationGpuPct)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (values.length === 0) {
+    return undefined;
+  }
+  return Math.max(...values);
+}
+
 function ratioPercent(value: number | undefined, total: number | undefined): number {
   if (
     typeof value !== "number" ||
@@ -191,6 +207,8 @@ function renderPerMessageButtons(index: number): string {
   return `
     <div class="download-row small">
       <button class="dl-btn" data-download="message-timeline-svg" data-message-index="${index}">Download timeline SVG</button>
+      <button class="dl-btn" data-download="message-cpu-svg" data-message-index="${index}">Download CPU SVG</button>
+      <button class="dl-btn" data-download="message-gpu-svg" data-message-index="${index}">Download GPU SVG</button>
       <button class="dl-btn" data-download="message-json" data-message-index="${index}">Download message JSON</button>
       <button class="dl-btn" data-download="message-csv" data-message-index="${index}">Download message CSV</button>
     </div>`;
@@ -412,7 +430,76 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
   return [headers.join(","), ...rows].join("\n");
 }
 
-function renderMessageCards(messages: LatencyMessageSummary[]): string {
+function filterSamplesForWindow(
+  samples: HardwareTraceSample[],
+  startedAtMs?: number,
+  endedAtMs?: number,
+): HardwareTraceSample[] {
+  if (
+    typeof startedAtMs !== "number" ||
+    typeof endedAtMs !== "number" ||
+    !Number.isFinite(startedAtMs) ||
+    !Number.isFinite(endedAtMs)
+  ) {
+    return [];
+  }
+  return samples.filter((sample) => sample.epochMs >= startedAtMs && sample.epochMs <= endedAtMs);
+}
+
+function buildMessageWindowMetric(params: {
+  message: LatencyMessageSummary;
+  kind: "cpu" | "gpu";
+  samples: HardwareTraceSample[];
+}): ChartMetric {
+  const scopedSamples = filterSamplesForWindow(
+    params.samples,
+    params.message.overallWindowStartedAtMs,
+    params.message.overallWindowEndedAtMs,
+  );
+  return {
+    id: `${params.message.key}-${params.kind}-window`,
+    title:
+      params.kind === "cpu"
+        ? "CPU Utilization (T1-T6 Interval)"
+        : "GPU Utilization (T1-T6 Interval)",
+    unit: "%",
+    points: scopedSamples.map((sample, index) => ({
+      x: index,
+      y: params.kind === "cpu" ? sample.cpuUtilPct : deriveGpuUtilForSample(sample),
+    })),
+  };
+}
+
+function renderMessageUtilCharts(
+  message: LatencyMessageSummary,
+  index: number,
+  hardwareSamples: HardwareTraceSample[],
+): string {
+  const cpuMetric = buildMessageWindowMetric({ message, kind: "cpu", samples: hardwareSamples });
+  const gpuMetric = buildMessageWindowMetric({ message, kind: "gpu", samples: hardwareSamples });
+  return `
+    <div class="message-chart-grid">
+      <article class="chart-card" data-chart-id="message-${index}-cpu-window">
+        <div class="chart-header">
+          <div class="chart-title">${escapeHtml(cpuMetric.title)}</div>
+          <div class="chart-subtitle">${escapeHtml(message.messageId ? String(message.messageId) : message.key)}</div>
+        </div>
+        ${renderChartSvg(cpuMetric)}
+      </article>
+      <article class="chart-card" data-chart-id="message-${index}-gpu-window">
+        <div class="chart-header">
+          <div class="chart-title">${escapeHtml(gpuMetric.title)}</div>
+          <div class="chart-subtitle">${escapeHtml(message.messageId ? String(message.messageId) : message.key)}</div>
+        </div>
+        ${renderChartSvg(gpuMetric)}
+      </article>
+    </div>`;
+}
+
+function renderMessageCards(
+  messages: LatencyMessageSummary[],
+  hardwareSamples: HardwareTraceSample[],
+): string {
   return messages
     .map((message, index) => {
       const rows = [
@@ -453,6 +540,7 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
           ${renderStageBar(message)}
           ${renderPerMessageButtons(index)}
           <div class="message-grid">${rows}</div>
+          ${renderMessageUtilCharts(message, index, hardwareSamples)}
           <div class="message-hardware-grid">
             ${renderHardwareWindowCard("RAG Recall Hardware", message.hardwareRag)}
             ${renderHardwareWindowCard("LLM Inference Hardware", message.hardwareLlm)}
@@ -461,62 +549,6 @@ function renderMessageCards(messages: LatencyMessageSummary[]): string {
         </article>`;
     })
     .join("");
-}
-
-function renderMessageMetricsTable(messages: LatencyMessageSummary[]): string {
-  const rows = messages
-    .map(
-      (message) => `<tr>
-        <td>${escapeHtml(String(message.accountId ?? "N/A"))}</td>
-        <td>${escapeHtml(String(message.messageId ?? "N/A"))}</td>
-        <td>${escapeHtml(formatMs(message.localFirstVisibleMs))}</td>
-        <td>${escapeHtml(formatMs(message.localCompleteMs))}</td>
-        <td>${escapeHtml(formatMs(message.t4RagRecallMs))}</td>
-        <td>${escapeHtml(formatCount(message.t4RagRecallResults))}</td>
-        <td>${escapeHtml(message.hardwareRag?.computePlacement ?? "N/A")}</td>
-        <td>${escapeHtml(formatCount(message.t5LlmCallCount))}</td>
-        <td>${escapeHtml(message.hardwareLlm?.computePlacement ?? "N/A")}</td>
-        <td>${escapeHtml(formatCount(message.t5InputTokens))}</td>
-        <td>${escapeHtml(formatCount(message.t5OutputTokens))}</td>
-        <td>${escapeHtml(formatCount(message.t5PrefillTokensPerSec))}</td>
-        <td>${escapeHtml(formatCount(message.t5DecodeTokensPerSec))}</td>
-        <td>${escapeHtml(formatPct(message.hardwareRag?.cpuUtilAvgPct))}</td>
-        <td>${escapeHtml(formatPct(message.hardwareRag?.gpuUtilAvgPct))}</td>
-        <td>${escapeHtml(formatPct(message.hardwareRag?.gpuMemUtilAvgPct))}</td>
-        <td>${escapeHtml(formatWatts(message.hardwareRag?.gpuPowerAvgW))}</td>
-        <td>${escapeHtml(formatPct(message.hardwareGpuUtilAvgPct))}</td>
-        <td>${escapeHtml(formatPct(message.hardwareGpuMemUtilAvgPct))}</td>
-        <td>${escapeHtml(formatWatts(message.hardwareGpuPowerAvgW))}</td>
-      </tr>`,
-    )
-    .join("");
-  return `<table class="series-table">
-    <thead>
-      <tr>
-        <th>Account</th>
-        <th>Message</th>
-        <th>E2E First</th>
-        <th>E2E Complete</th>
-        <th>T4 RAG</th>
-        <th>RAG Hits</th>
-        <th>RAG Placement</th>
-        <th>Calls</th>
-        <th>LLM Placement</th>
-        <th>Input</th>
-        <th>Output</th>
-        <th>Prefill TPS</th>
-        <th>Decode TPS</th>
-        <th>RAG CPU Avg</th>
-        <th>RAG GPU Avg</th>
-        <th>RAG GPU Mem Avg</th>
-        <th>RAG GPU Power Avg</th>
-        <th>GPU Util</th>
-        <th>GPU Mem Util</th>
-        <th>GPU Power</th>
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-  </table>`;
 }
 
 function renderHardwareWindowCard(title: string, summary?: HardwareWindowSummary): string {
@@ -822,11 +854,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
   return metrics;
 }
 
-function summarizeChartMetric(metric: ChartMetric): {
-  avg?: number;
-  max?: number;
-  latest?: number;
-} {
+function summarizeChartMetric(metric: ChartMetric): MetricSummary {
   const values = metric.points
     .map((point) => point.y)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
@@ -844,6 +872,7 @@ function renderChartSvg(metric: ChartMetric): string {
   const width = 760;
   const height = 220;
   const padding = 26;
+  const summary = summarizeChartMetric(metric);
   const numericPoints = metric.points.filter(
     (point): point is { x: number; y: number } =>
       typeof point.y === "number" && Number.isFinite(point.y),
@@ -871,13 +900,25 @@ function renderChartSvg(metric: ChartMetric): string {
   const latest = numericPoints.at(-1)?.y;
   const min = Math.min(...numericPoints.map((point) => point.y));
   const max = Math.max(...numericPoints.map((point) => point.y));
+  const avg = summary.avg;
+  const lineY = (value: number) =>
+    height - padding - ((value - minY) / ySpan) * (height - padding * 2);
+  const avgGuideY = typeof avg === "number" ? lineY(avg) : undefined;
+  const maxGuideY = lineY(max);
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
       <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="axis" />
       <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="axis" />
+      ${
+        typeof avgGuideY === "number"
+          ? `<line x1="${padding}" y1="${avgGuideY.toFixed(1)}" x2="${width - padding}" y2="${avgGuideY.toFixed(1)}" class="guide avg-guide" />`
+          : ""
+      }
+      <line x1="${padding}" y1="${maxGuideY.toFixed(1)}" x2="${width - padding}" y2="${maxGuideY.toFixed(1)}" class="guide max-guide" />
       <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-      <text x="${padding}" y="${padding - 6}" class="axis-label">${escapeHtml(`max ${formatUnit(metric.unit, max)}`)}</text>
-      <text x="${padding}" y="${height - 6}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
+      <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">${escapeHtml(metric.title)}</text>
+      <text x="${width / 2}" y="36" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`Avg: ${formatUnit(metric.unit, avg)} | Max: ${formatUnit(metric.unit, max)}`)}</text>
+      <text x="${padding}" y="${padding - 6}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
       <text x="${width - padding}" y="${padding - 6}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
     </svg>`;
 }
@@ -993,17 +1034,18 @@ export function renderLatencyReportHtml(
     .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin: 12px 0 16px; color: var(--muted); }
     .legend-item { display: inline-flex; align-items: center; gap: 8px; }
     .legend-dot { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
-    .message-list { display: grid; gap: 14px; }
-    .message-card { border: 1px solid var(--line); border-radius: 18px; padding: 16px; background: rgba(255,255,255,0.7); }
-    .message-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 12px; }
-    .message-title { font-weight: 700; font-size: 18px; }
-    .message-subtitle { color: var(--muted); font-size: 12px; word-break: break-all; }
-    .message-e2e { font: 700 24px/1 "Avenir Next Condensed", "Helvetica Neue", sans-serif; }
+      .message-list { display: grid; gap: 14px; }
+      .message-card { border: 1px solid var(--line); border-radius: 18px; padding: 16px; background: rgba(255,255,255,0.7); }
+      .message-header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; margin-bottom: 12px; }
+      .message-title { font-weight: 700; font-size: 18px; }
+      .message-subtitle { color: var(--muted); font-size: 12px; word-break: break-all; }
+      .message-e2e { font: 700 24px/1 "Avenir Next Condensed", "Helvetica Neue", sans-serif; }
     .stacked-bar { display: flex; width: 100%; height: 18px; overflow: hidden; border-radius: 999px; background: rgba(148,163,184,0.14); border: 1px solid rgba(148,163,184,0.18); margin-bottom: 12px; }
     .segment { height: 100%; }
     .segment.empty { width: 100%; background: rgba(148,163,184,0.16); }
-    .message-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 18px; }
-    .message-hardware-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 14px; }
+      .message-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px 18px; }
+      .message-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(320px, 1fr)); gap: 12px; margin-top: 14px; }
+      .message-hardware-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; margin-top: 14px; }
     .meta-row { display: flex; justify-content: space-between; gap: 10px; border-top: 1px dashed rgba(148,163,184,0.2); padding-top: 6px; }
     .meta-label { color: var(--muted); }
     .meta-value { font-weight: 600; }
@@ -1021,7 +1063,12 @@ export function renderLatencyReportHtml(
     .chart-subtitle { color: var(--muted); font-size: 12px; }
     .chart-svg { width: 100%; height: 220px; display: block; background: linear-gradient(180deg, rgba(15,118,110,0.06), rgba(15,118,110,0.01)); border-radius: 12px; }
     .axis { stroke: rgba(15,23,42,0.16); stroke-width: 1; }
+    .guide { stroke-width: 1.8; stroke-dasharray: 6 4; }
+    .avg-guide { stroke: #16a34a; }
+    .max-guide { stroke: #dc2626; }
     .axis-label { fill: #6b7280; font-size: 11px; font-family: "Helvetica Neue", Arial, sans-serif; }
+    .chart-overlay-title { fill: #111827; font-size: 16px; font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; }
+    .chart-overlay-subtitle { fill: #374151; font-size: 13px; font-family: "Helvetica Neue", Arial, sans-serif; }
     .chart-empty { display: grid; place-items: center; height: 220px; border-radius: 12px; background: rgba(148,163,184,0.12); color: var(--muted); border: 1px dashed rgba(148,163,184,0.28); }
     .download-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 0; }
     .download-row.small { margin: 0 0 12px; }
@@ -1036,6 +1083,7 @@ export function renderLatencyReportHtml(
       .wrap { padding: 18px 14px 40px; }
       h1 { font-size: 28px; }
       .message-header { flex-direction: column; align-items: flex-start; }
+      .message-chart-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -1051,13 +1099,7 @@ export function renderLatencyReportHtml(
       <h2>Per-message Timeline</h2>
       <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>
       ${renderLegend()}
-      <div class="message-list">${renderMessageCards(report.messages)}</div>
-    </section>
-
-    <section class="panel" style="margin-top:20px">
-      <h2>Per-message Metrics Table</h2>
-      <p class="section-note">This table replaces the old default avg/P95/P99 summary so every interaction stays visible.</p>
-      ${renderMessageMetricsTable(report.messages)}
+      <div class="message-list">${renderMessageCards(report.messages, hardwareSamples)}</div>
     </section>
 
     ${renderRagComparisonSection(report)}
@@ -1170,6 +1212,22 @@ export function renderLatencyReportHtml(
         if (type === "message-timeline-svg") {
           const index = Number(button.getAttribute("data-message-index"));
           downloadSvg("message-" + index + "-timeline.svg", buildMessageTimelineSvg(MESSAGES[index]));
+          return;
+        }
+        if (type === "message-cpu-svg") {
+          const index = Number(button.getAttribute("data-message-index"));
+          const svg = document.querySelector('[data-chart-id="message-' + index + '-cpu-window"] svg');
+          if (svg) {
+            downloadSvg("message-" + index + "-cpu.svg", svg.outerHTML);
+          }
+          return;
+        }
+        if (type === "message-gpu-svg") {
+          const index = Number(button.getAttribute("data-message-index"));
+          const svg = document.querySelector('[data-chart-id="message-' + index + '-gpu-window"] svg');
+          if (svg) {
+            downloadSvg("message-" + index + "-gpu.svg", svg.outerHTML);
+          }
           return;
         }
         if (type === "message-csv") {
