@@ -133,6 +133,7 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("GPU Utilization (T1-T6 Interval)");
     expect(html).toContain("Sample Index");
     expect(html).toContain("Utilization (%)");
+    expect(html).toContain("avg 32.0%");
     expect(html).toContain("RAG vs No-RAG Comparison");
     expect(html).toContain("Download timeline SVG");
     expect(html).toContain("Download CPU SVG");

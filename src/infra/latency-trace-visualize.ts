@@ -930,10 +930,24 @@ function renderChartSvg(metric: ChartMetric): string {
     height - paddingBottom - ((value - minY) / ySpan) * (height - paddingTop - paddingBottom);
   const avgGuideY = typeof avg === "number" ? lineY(avg) : undefined;
   const maxGuideY = lineY(max);
+  const minGuideY = lineY(min);
+  const yTicks = [
+    { label: `max ${formatUnit(metric.unit, max)}`, y: maxGuideY },
+    ...(typeof avgGuideY === "number"
+      ? [{ label: `avg ${formatUnit(metric.unit, avg)}`, y: avgGuideY }]
+      : []),
+    { label: `min ${formatUnit(metric.unit, min)}`, y: minGuideY },
+  ];
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
       <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
       <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${height - paddingBottom}" class="axis" />
+      ${yTicks
+        .map(
+          (tick) =>
+            `<line x1="${paddingLeft - 5}" y1="${tick.y.toFixed(1)}" x2="${paddingLeft}" y2="${tick.y.toFixed(1)}" class="tick" />`,
+        )
+        .join("")}
       ${
         typeof avgGuideY === "number"
           ? `<line x1="${paddingLeft}" y1="${avgGuideY.toFixed(1)}" x2="${width - paddingRight}" y2="${avgGuideY.toFixed(1)}" class="guide avg-guide" />`
@@ -943,7 +957,12 @@ function renderChartSvg(metric: ChartMetric): string {
       <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">${escapeHtml(metric.title)}</text>
       <text x="${width / 2}" y="36" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`Avg: ${formatUnit(metric.unit, avg)} | Max: ${formatUnit(metric.unit, max)}`)}</text>
-      <text x="${paddingLeft}" y="${paddingTop - 8}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
+      ${yTicks
+        .map(
+          (tick) =>
+            `<text x="${paddingLeft - 8}" y="${(tick.y + 4).toFixed(1)}" text-anchor="end" class="axis-label">${escapeHtml(tick.label)}</text>`,
+        )
+        .join("")}
       <text x="${width - paddingRight}" y="${paddingTop - 8}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
       <text x="${(paddingLeft + width - paddingRight) / 2}" y="${height - 6}" text-anchor="middle" class="axis-label">${escapeHtml(xAxisLabel)}</text>
       <text x="14" y="${height / 2}" text-anchor="middle" transform="rotate(-90 14 ${height / 2})" class="axis-label">${escapeHtml(yAxisLabel)}</text>
@@ -1090,6 +1109,7 @@ export function renderLatencyReportHtml(
     .chart-subtitle { color: var(--muted); font-size: 12px; }
     .chart-svg { width: 100%; height: 220px; display: block; background: linear-gradient(180deg, rgba(15,118,110,0.06), rgba(15,118,110,0.01)); border-radius: 12px; }
     .axis { stroke: rgba(15,23,42,0.16); stroke-width: 1; }
+    .tick { stroke: rgba(15,23,42,0.22); stroke-width: 1; }
     .guide { stroke-width: 1.8; stroke-dasharray: 6 4; }
     .avg-guide { stroke: #16a34a; }
     .max-guide { stroke: #dc2626; }
