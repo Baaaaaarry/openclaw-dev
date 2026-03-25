@@ -868,10 +868,32 @@ function summarizeChartMetric(metric: ChartMetric): MetricSummary {
   };
 }
 
+function resolveYAxisLabel(metric: ChartMetric): string {
+  if (metric.unit === "%") {
+    return "Utilization (%)";
+  }
+  if (metric.unit === "W") {
+    return "Power (W)";
+  }
+  if (metric.unit === "MiB") {
+    return "Memory (MiB)";
+  }
+  if (metric.unit === "MHz") {
+    return "Frequency (MHz)";
+  }
+  if (metric.unit === "load") {
+    return "Load";
+  }
+  return `Value (${metric.unit})`;
+}
+
 function renderChartSvg(metric: ChartMetric): string {
   const width = 760;
   const height = 220;
-  const padding = 26;
+  const paddingLeft = 52;
+  const paddingRight = 26;
+  const paddingTop = 48;
+  const paddingBottom = 34;
   const summary = summarizeChartMetric(metric);
   const numericPoints = metric.points.filter(
     (point): point is { x: number; y: number } =>
@@ -892,8 +914,9 @@ function renderChartSvg(metric: ChartMetric): string {
   const ySpan = Math.max(1, maxY - minY);
   const points = numericPoints
     .map((point) => {
-      const x = padding + ((point.x - minX) / xSpan) * (width - padding * 2);
-      const y = height - padding - ((point.y - minY) / ySpan) * (height - padding * 2);
+      const x = paddingLeft + ((point.x - minX) / xSpan) * (width - paddingLeft - paddingRight);
+      const y =
+        height - paddingBottom - ((point.y - minY) / ySpan) * (height - paddingTop - paddingBottom);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
@@ -901,25 +924,29 @@ function renderChartSvg(metric: ChartMetric): string {
   const min = Math.min(...numericPoints.map((point) => point.y));
   const max = Math.max(...numericPoints.map((point) => point.y));
   const avg = summary.avg;
+  const xAxisLabel = "Sample Index";
+  const yAxisLabel = resolveYAxisLabel(metric);
   const lineY = (value: number) =>
-    height - padding - ((value - minY) / ySpan) * (height - padding * 2);
+    height - paddingBottom - ((value - minY) / ySpan) * (height - paddingTop - paddingBottom);
   const avgGuideY = typeof avg === "number" ? lineY(avg) : undefined;
   const maxGuideY = lineY(max);
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
-      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="axis" />
-      <line x1="${padding}" y1="${padding}" x2="${padding}" y2="${height - padding}" class="axis" />
+      <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
+      <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${height - paddingBottom}" class="axis" />
       ${
         typeof avgGuideY === "number"
-          ? `<line x1="${padding}" y1="${avgGuideY.toFixed(1)}" x2="${width - padding}" y2="${avgGuideY.toFixed(1)}" class="guide avg-guide" />`
+          ? `<line x1="${paddingLeft}" y1="${avgGuideY.toFixed(1)}" x2="${width - paddingRight}" y2="${avgGuideY.toFixed(1)}" class="guide avg-guide" />`
           : ""
       }
-      <line x1="${padding}" y1="${maxGuideY.toFixed(1)}" x2="${width - padding}" y2="${maxGuideY.toFixed(1)}" class="guide max-guide" />
+      <line x1="${paddingLeft}" y1="${maxGuideY.toFixed(1)}" x2="${width - paddingRight}" y2="${maxGuideY.toFixed(1)}" class="guide max-guide" />
       <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">${escapeHtml(metric.title)}</text>
       <text x="${width / 2}" y="36" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`Avg: ${formatUnit(metric.unit, avg)} | Max: ${formatUnit(metric.unit, max)}`)}</text>
-      <text x="${padding}" y="${padding - 6}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
-      <text x="${width - padding}" y="${padding - 6}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
+      <text x="${paddingLeft}" y="${paddingTop - 8}" class="axis-label">${escapeHtml(`min ${formatUnit(metric.unit, min)}`)}</text>
+      <text x="${width - paddingRight}" y="${paddingTop - 8}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
+      <text x="${(paddingLeft + width - paddingRight) / 2}" y="${height - 6}" text-anchor="middle" class="axis-label">${escapeHtml(xAxisLabel)}</text>
+      <text x="14" y="${height / 2}" text-anchor="middle" transform="rotate(-90 14 ${height / 2})" class="axis-label">${escapeHtml(yAxisLabel)}</text>
     </svg>`;
 }
 
