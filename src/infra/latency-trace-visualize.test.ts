@@ -16,6 +16,9 @@ describe("latency-trace-visualize", () => {
           t2GatewayEnqueueMs: 20,
           t3WorkerQueueWaitMs: 30,
           t4AgentPreprocessMs: 40,
+          t4RagRecallMs: 15,
+          t4RagRecallResults: 2,
+          ragUsed: true,
           t5LlmCallCount: 1,
           t5LlmTtftMs: 100,
           t5LlmTotalMs: 500,
@@ -34,6 +37,40 @@ describe("latency-trace-visualize", () => {
           t6FeishuFinalAckMs: 70,
           localFirstVisibleMs: 260,
           localCompleteMs: 670,
+          overallWindowStartedAtMs: 1_000,
+          overallWindowEndedAtMs: 2_000,
+          hardwareRag: {
+            sampleCount: 1,
+            cpuUtilAvgPct: 30,
+            cpuUtilMaxPct: 30,
+            gpuUtilAvgPct: 10,
+            gpuUtilMaxPct: 10,
+            gpuMemUtilAvgPct: 12,
+            gpuMemUtilMaxPct: 12,
+            gpuPowerAvgW: 8,
+            gpuPowerMaxW: 8,
+            computePlacement: "cpu-biased",
+          },
+          hardwareLlm: {
+            sampleCount: 1,
+            cpuUtilAvgPct: 18,
+            cpuUtilMaxPct: 18,
+            gpuUtilAvgPct: 88,
+            gpuUtilMaxPct: 88,
+            gpuMemUtilAvgPct: 66,
+            gpuMemUtilMaxPct: 66,
+            gpuPowerAvgW: 40,
+            gpuPowerMaxW: 40,
+            computePlacement: "gpu-biased",
+          },
+          hardwareOverall: {
+            sampleCount: 2,
+            cpuUtilAvgPct: 24,
+            cpuUtilMaxPct: 30,
+            gpuUtilAvgPct: 49,
+            gpuUtilMaxPct: 88,
+            computePlacement: "mixed",
+          },
           hardwareGpuUtilAvgPct: 88,
         },
       ],
@@ -45,17 +82,59 @@ describe("latency-trace-visualize", () => {
         hardware_gpu_util_avg_pct: { count: 1, avg: 88, p95: 88, p99: 88 },
         t1_feishu_inbound_ms: { count: 1, avg: 10, p95: 10, p99: 10 },
       },
+      comparisons: {
+        ragVsNoRag: {
+          rag: {
+            count: 1,
+            e2eLocalCompleteAvgMs: 670,
+            t4RagRecallAvgMs: 15,
+            t5LlmTotalAvgMs: 500,
+            t5InputTokensAvg: 1000,
+            t5DecodeTpsAvg: 200,
+            ragCpuAvgPct: 30,
+            ragGpuAvgPct: 10,
+            ragGpuMemUtilAvgPct: 12,
+            ragGpuPowerAvgW: 8,
+            ragPlacement: "cpu-biased",
+            llmCpuAvgPct: 18,
+            llmGpuAvgPct: 88,
+            llmGpuMemUtilAvgPct: 66,
+            llmGpuPowerAvgW: 40,
+            llmPlacement: "gpu-biased",
+          },
+          noRag: { count: 0 },
+        },
+      },
     };
 
     const html = renderLatencyReportHtml({
       report,
-      hardwareSamples: [],
+      hardwareSamples: [
+        {
+          ts: "2026-01-01T00:00:01.200Z",
+          epochMs: 1_200,
+          cpuUtilPct: 32,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 30,
+          memUsedBytes: 70,
+          memUtilPct: 70,
+          gpus: [{ index: 0, utilizationGpuPct: 82 }],
+        },
+      ],
     });
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("OpenClaw Latency Dashboard");
     expect(html).toContain("Per-message Timeline");
     expect(html).toContain("msg1");
-    expect(html).toContain("Per-message Metrics Table");
+    expect(html).toContain("CPU Utilization (T1-T6 Interval)");
+    expect(html).toContain("GPU Utilization (T1-T6 Interval)");
+    expect(html).toContain("RAG vs No-RAG Comparison");
+    expect(html).toContain("Download timeline SVG");
+    expect(html).toContain("Download CPU SVG");
+    expect(html).toContain("Download GPU SVG");
     expect(html).not.toContain("Aggregate Summary");
   });
 
@@ -66,6 +145,12 @@ describe("latency-trace-visualize", () => {
       series: {
         e2e_local_first_visible_ms: { count: 1, avg: 260, p95: 260, p99: 260 },
         e2e_local_complete_ms: { count: 1, avg: 670, p95: 670, p99: 670 },
+      },
+      comparisons: {
+        ragVsNoRag: {
+          rag: { count: 0 },
+          noRag: { count: 0 },
+        },
       },
     };
     const html = renderLatencyReportHtml({ report, avgMode: true });
