@@ -83,6 +83,39 @@ describe("latency-trace-visualize", () => {
             gpuUtilMaxPct: 88,
             computePlacement: "mixed",
           },
+          hardwareT5Load: {
+            sampleCount: 1,
+            cpuUtilAvgPct: 52,
+            cpuUtilMaxPct: 52,
+            gpuUtilAvgPct: 9,
+            gpuUtilMaxPct: 9,
+            gpuPowerAvgW: 18,
+            gpuPowerMaxW: 18,
+            gpuMemClockAvgMHz: 800,
+            gpuMemClockMaxMHz: 800,
+          },
+          hardwareT5Prefill: {
+            sampleCount: 1,
+            cpuUtilAvgPct: 28,
+            cpuUtilMaxPct: 28,
+            gpuUtilAvgPct: 55,
+            gpuUtilMaxPct: 55,
+            gpuPowerAvgW: 32,
+            gpuPowerMaxW: 32,
+            gpuMemClockAvgMHz: 1100,
+            gpuMemClockMaxMHz: 1100,
+          },
+          hardwareT5Decode: {
+            sampleCount: 1,
+            cpuUtilAvgPct: 16,
+            cpuUtilMaxPct: 16,
+            gpuUtilAvgPct: 90,
+            gpuUtilMaxPct: 90,
+            gpuPowerAvgW: 42,
+            gpuPowerMaxW: 42,
+            gpuMemClockAvgMHz: 1250,
+            gpuMemClockMaxMHz: 1250,
+          },
           hardwareGpuUtilAvgPct: 88,
         },
       ],
@@ -189,6 +222,10 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain(">T5<");
     expect(html).toContain(">T6<");
     expect(html).toContain("RAG vs No-RAG Comparison");
+    expect(html).toContain("T5 Phase Hardware Breakdown");
+    expect(html).toContain("T5 Load Hardware");
+    expect(html).toContain("T5 Prefill Hardware");
+    expect(html).toContain("T5 Decode Hardware");
     expect(html).toContain("Download timeline SVG");
     expect(html).toContain("Download CPU SVG");
     expect(html).toContain("Download GPU SVG");

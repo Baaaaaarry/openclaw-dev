@@ -158,6 +158,7 @@ describe("latency-trace-report", () => {
     expect(text).toContain("Per-message Summary:");
     expect(text).toContain("Derived summary:");
     expect(text).toContain("RAG vs No-RAG comparison:");
+    expect(text).toContain("T5 phase hardware summary:");
     expect(text).toContain("T2=12.0ms");
     expect(text).toContain("t5_llm_call_count");
     expect(text).toContain("t2_gateway_enqueue_ms");
@@ -248,6 +249,81 @@ describe("latency-trace-report", () => {
     expect(report.messages[0]?.hardwareGpuMemUtilAvgPct).toBe(55);
     expect(report.messages[0]?.hardwareGpuPowerAvgW).toBe(110);
     expect(report.messages[0]?.hardwareLlm?.gpuUtilMaxPct).toBe(80);
+  });
+
+  it("aligns T5 load, prefill, and decode windows to hardware samples", () => {
+    const report = summarizeLatencyRecords(
+      parseLatencyTraceJsonl(
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "native",
+            durationMs: 400,
+            totalMs: 400,
+            loadMs: 100,
+            promptEvalMs: 100,
+            evalMs: 200,
+            startedAtMs: 1_000,
+            endedAtMs: 1_400,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_2",
+          }),
+        ].join("\n"),
+      ),
+      [
+        {
+          ts: "2026-01-01T00:00:01.050Z",
+          epochMs: 1_050,
+          cpuUtilPct: 55,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 40,
+          memUsedBytes: 60,
+          memUtilPct: 60,
+          gpus: [{ index: 0, utilizationGpuPct: 8, powerDrawW: 20 }],
+        },
+        {
+          ts: "2026-01-01T00:00:01.150Z",
+          epochMs: 1_150,
+          cpuUtilPct: 30,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 38,
+          memUsedBytes: 62,
+          memUtilPct: 62,
+          gpus: [{ index: 0, utilizationGpuPct: 42, powerDrawW: 45 }],
+        },
+        {
+          ts: "2026-01-01T00:00:01.300Z",
+          epochMs: 1_300,
+          cpuUtilPct: 18,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 35,
+          memUsedBytes: 65,
+          memUtilPct: 65,
+          gpus: [{ index: 0, utilizationGpuPct: 91, powerDrawW: 120 }],
+        },
+      ],
+    );
+
+    expect(report.messages[0]?.hardwareT5Load?.sampleCount).toBe(1);
+    expect(report.messages[0]?.hardwareT5Load?.cpuUtilAvgPct).toBe(55);
+    expect(report.messages[0]?.hardwareT5Load?.gpuUtilAvgPct).toBe(8);
+    expect(report.messages[0]?.hardwareT5Prefill?.sampleCount).toBe(1);
+    expect(report.messages[0]?.hardwareT5Prefill?.cpuUtilAvgPct).toBe(30);
+    expect(report.messages[0]?.hardwareT5Prefill?.gpuUtilAvgPct).toBe(42);
+    expect(report.messages[0]?.hardwareT5Decode?.sampleCount).toBe(1);
+    expect(report.messages[0]?.hardwareT5Decode?.cpuUtilAvgPct).toBe(18);
+    expect(report.messages[0]?.hardwareT5Decode?.gpuUtilAvgPct).toBe(91);
   });
 
   it("falls back to utilization.memory when gpu memory totals are unavailable", () => {

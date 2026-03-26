@@ -31,6 +31,11 @@ export type HardwareWindowSummary = {
   computePlacement?: "cpu-biased" | "gpu-biased" | "mixed" | "unclear";
 };
 
+type TimeWindow = {
+  startedAtMs: number;
+  endedAtMs: number;
+};
+
 export type RagComparisonGroupSummary = {
   count: number;
   e2eLocalCompleteAvgMs?: number;
@@ -116,11 +121,22 @@ export type LatencyMessageSummary = {
   t5DecodeMsPerOutputToken?: number;
   t5WindowStartedAtMs?: number;
   t5WindowEndedAtMs?: number;
+  t5LoadWindows?: TimeWindow[];
+  t5PrefillWindows?: TimeWindow[];
+  t5DecodeWindows?: TimeWindow[];
   overallWindowStartedAtMs?: number;
   overallWindowEndedAtMs?: number;
   ragWindowStartedAtMs?: number;
   ragWindowEndedAtMs?: number;
   ragUsed?: boolean;
+  hardwareT1?: HardwareWindowSummary;
+  hardwareT2?: HardwareWindowSummary;
+  hardwareT3?: HardwareWindowSummary;
+  hardwareT4?: HardwareWindowSummary;
+  hardwareT5Load?: HardwareWindowSummary;
+  hardwareT5Prefill?: HardwareWindowSummary;
+  hardwareT5Decode?: HardwareWindowSummary;
+  hardwareT6?: HardwareWindowSummary;
   hardwareOverall?: HardwareWindowSummary;
   hardwareRag?: HardwareWindowSummary;
   hardwareLlm?: HardwareWindowSummary;
@@ -355,6 +371,63 @@ function updateStageWindow(
   }
 }
 
+function appendTimeWindow(
+  windows: TimeWindow[] | undefined,
+  startedAtMs: number | undefined,
+  endedAtMs: number | undefined,
+): TimeWindow[] | undefined {
+  if (
+    typeof startedAtMs !== "number" ||
+    !Number.isFinite(startedAtMs) ||
+    typeof endedAtMs !== "number" ||
+    !Number.isFinite(endedAtMs) ||
+    endedAtMs <= startedAtMs
+  ) {
+    return windows;
+  }
+  return [...(windows ?? []), { startedAtMs, endedAtMs }];
+}
+
+function appendT5PhaseWindows(
+  summary: LatencyMessageSummary,
+  record: PersistedLatencySegmentRecord,
+): void {
+  if (
+    typeof record.startedAtMs !== "number" ||
+    !Number.isFinite(record.startedAtMs) ||
+    typeof record.endedAtMs !== "number" ||
+    !Number.isFinite(record.endedAtMs) ||
+    record.endedAtMs <= record.startedAtMs
+  ) {
+    return;
+  }
+  const wallTotalMs = record.endedAtMs - record.startedAtMs;
+  const sourceTotalMs = toFiniteNumber(record.totalMs) ?? wallTotalMs;
+  if (!(wallTotalMs > 0) || !(sourceTotalMs > 0)) {
+    return;
+  }
+  const scale = wallTotalMs / sourceTotalMs;
+  const loadMs = (toFiniteNumber(record.loadMs) ?? 0) * scale;
+  const prefillMs = (toFiniteNumber(record.promptEvalMs) ?? 0) * scale;
+  const decodeMs = (toFiniteNumber(record.evalMs) ?? 0) * scale;
+  let cursor = record.startedAtMs;
+
+  if (loadMs > 0) {
+    const loadEnd = Math.min(record.endedAtMs, cursor + loadMs);
+    summary.t5LoadWindows = appendTimeWindow(summary.t5LoadWindows, cursor, loadEnd);
+    cursor = loadEnd;
+  }
+  if (prefillMs > 0) {
+    const prefillEnd = Math.min(record.endedAtMs, cursor + prefillMs);
+    summary.t5PrefillWindows = appendTimeWindow(summary.t5PrefillWindows, cursor, prefillEnd);
+    cursor = prefillEnd;
+  }
+  if (decodeMs > 0) {
+    const decodeEnd = Math.min(record.endedAtMs, cursor + decodeMs);
+    summary.t5DecodeWindows = appendTimeWindow(summary.t5DecodeWindows, cursor, decodeEnd);
+  }
+}
+
 function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySegmentRecord): void {
   updateOverallWindow(summary, record);
   switch (record.segment) {
@@ -478,6 +551,7 @@ function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySe
       ) {
         summary.t5WindowEndedAtMs = record.endedAtMs;
       }
+      appendT5PhaseWindows(summary, record);
       return;
     case "t6_feishu_return":
       updateStageWindow(
@@ -551,6 +625,34 @@ function correlateHardwareSamples(
 ): void {
   const sortedSamples = [...hardwareSamples].toSorted((a, b) => a.epochMs - b.epochMs);
   for (const message of messages) {
+    message.hardwareT1 = summarizeHardwareWindow(
+      sortedSamples,
+      message.t1WindowStartedAtMs,
+      message.t1WindowEndedAtMs,
+    );
+    message.hardwareT2 = summarizeHardwareWindow(
+      sortedSamples,
+      message.t2WindowStartedAtMs,
+      message.t2WindowEndedAtMs,
+    );
+    message.hardwareT3 = summarizeHardwareWindow(
+      sortedSamples,
+      message.t3WindowStartedAtMs,
+      message.t3WindowEndedAtMs,
+    );
+    message.hardwareT4 = summarizeHardwareWindow(
+      sortedSamples,
+      message.t4WindowStartedAtMs,
+      message.t4WindowEndedAtMs,
+    );
+    message.hardwareT5Load = summarizeHardwareWindows(sortedSamples, message.t5LoadWindows);
+    message.hardwareT5Prefill = summarizeHardwareWindows(sortedSamples, message.t5PrefillWindows);
+    message.hardwareT5Decode = summarizeHardwareWindows(sortedSamples, message.t5DecodeWindows);
+    message.hardwareT6 = summarizeHardwareWindow(
+      sortedSamples,
+      message.t6WindowStartedAtMs,
+      message.t6WindowEndedAtMs,
+    );
     message.hardwareOverall = summarizeHardwareWindow(
       sortedSamples,
       message.overallWindowStartedAtMs,
@@ -705,6 +807,38 @@ function summarizeHardwareWindow(
   const windowSamples = samples.filter(
     (sample) => sample.epochMs >= startedAtMs && sample.epochMs <= endedAtMs,
   );
+  return summarizeHardwareSamples(windowSamples);
+}
+
+function summarizeHardwareWindows(
+  samples: HardwareTraceSample[],
+  windows: TimeWindow[] | undefined,
+): HardwareWindowSummary | undefined {
+  if (!windows || windows.length === 0) {
+    return undefined;
+  }
+  const validWindows = windows
+    .filter(
+      (window) =>
+        Number.isFinite(window.startedAtMs) &&
+        Number.isFinite(window.endedAtMs) &&
+        window.endedAtMs > window.startedAtMs,
+    )
+    .toSorted((a, b) => a.startedAtMs - b.startedAtMs);
+  if (validWindows.length === 0) {
+    return undefined;
+  }
+  const windowSamples = samples.filter((sample) =>
+    validWindows.some(
+      (window) => sample.epochMs >= window.startedAtMs && sample.epochMs <= window.endedAtMs,
+    ),
+  );
+  return summarizeHardwareSamples(windowSamples);
+}
+
+function summarizeHardwareSamples(
+  windowSamples: HardwareTraceSample[],
+): HardwareWindowSummary | undefined {
   if (windowSamples.length === 0) {
     return undefined;
   }
@@ -1125,6 +1259,30 @@ export function formatLatencyReportText(report: LatencyAggregateReport): string 
         `llm.gpuPower.avg/max=${formatWatts(summary.llmGpuPowerAvgW)}/${formatWatts(summary.llmGpuPowerMaxW)}`,
         `llm.gpuMemClock.avg/max=${formatCount(summary.llmGpuMemClockAvgMHz)}/${formatCount(summary.llmGpuMemClockMaxMHz)}`,
         `llm.compute=${formatPlacement(summary.llmPlacement)}`,
+      ].join(" "),
+    );
+  }
+  lines.push("");
+  lines.push("T5 phase hardware summary:");
+  for (const message of report.messages) {
+    lines.push(
+      [
+        `key=${message.key}`,
+        `T5.load.hw.samples=${formatCount(message.hardwareT5Load?.sampleCount)}`,
+        `T5.load.hw.cpu.avg/max=${formatPct(message.hardwareT5Load?.cpuUtilAvgPct)}/${formatPct(message.hardwareT5Load?.cpuUtilMaxPct)}`,
+        `T5.load.hw.gpu.avg/max=${formatPct(message.hardwareT5Load?.gpuUtilAvgPct)}/${formatPct(message.hardwareT5Load?.gpuUtilMaxPct)}`,
+        `T5.load.hw.gpuMem.avg/max=${formatPct(message.hardwareT5Load?.gpuMemUtilAvgPct)}/${formatPct(message.hardwareT5Load?.gpuMemUtilMaxPct)}`,
+        `T5.load.hw.gpuPower.avg/max=${formatWatts(message.hardwareT5Load?.gpuPowerAvgW)}/${formatWatts(message.hardwareT5Load?.gpuPowerMaxW)}`,
+        `T5.prefill.hw.samples=${formatCount(message.hardwareT5Prefill?.sampleCount)}`,
+        `T5.prefill.hw.cpu.avg/max=${formatPct(message.hardwareT5Prefill?.cpuUtilAvgPct)}/${formatPct(message.hardwareT5Prefill?.cpuUtilMaxPct)}`,
+        `T5.prefill.hw.gpu.avg/max=${formatPct(message.hardwareT5Prefill?.gpuUtilAvgPct)}/${formatPct(message.hardwareT5Prefill?.gpuUtilMaxPct)}`,
+        `T5.prefill.hw.gpuMem.avg/max=${formatPct(message.hardwareT5Prefill?.gpuMemUtilAvgPct)}/${formatPct(message.hardwareT5Prefill?.gpuMemUtilMaxPct)}`,
+        `T5.prefill.hw.gpuPower.avg/max=${formatWatts(message.hardwareT5Prefill?.gpuPowerAvgW)}/${formatWatts(message.hardwareT5Prefill?.gpuPowerMaxW)}`,
+        `T5.decode.hw.samples=${formatCount(message.hardwareT5Decode?.sampleCount)}`,
+        `T5.decode.hw.cpu.avg/max=${formatPct(message.hardwareT5Decode?.cpuUtilAvgPct)}/${formatPct(message.hardwareT5Decode?.cpuUtilMaxPct)}`,
+        `T5.decode.hw.gpu.avg/max=${formatPct(message.hardwareT5Decode?.gpuUtilAvgPct)}/${formatPct(message.hardwareT5Decode?.gpuUtilMaxPct)}`,
+        `T5.decode.hw.gpuMem.avg/max=${formatPct(message.hardwareT5Decode?.gpuMemUtilAvgPct)}/${formatPct(message.hardwareT5Decode?.gpuMemUtilMaxPct)}`,
+        `T5.decode.hw.gpuPower.avg/max=${formatWatts(message.hardwareT5Decode?.gpuPowerAvgW)}/${formatWatts(message.hardwareT5Decode?.gpuPowerMaxW)}`,
       ].join(" "),
     );
   }

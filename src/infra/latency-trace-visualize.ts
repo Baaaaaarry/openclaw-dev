@@ -273,6 +273,39 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
     "llm_gpu_mem_clock_avg_mhz",
     "llm_gpu_mem_clock_max_mhz",
     "llm_compute_placement",
+    "t5_load_sample_count",
+    "t5_load_cpu_util_avg_pct",
+    "t5_load_cpu_util_max_pct",
+    "t5_load_gpu_util_avg_pct",
+    "t5_load_gpu_util_max_pct",
+    "t5_load_gpu_mem_util_avg_pct",
+    "t5_load_gpu_mem_util_max_pct",
+    "t5_load_gpu_power_avg_w",
+    "t5_load_gpu_power_max_w",
+    "t5_load_gpu_sm_clock_avg_mhz",
+    "t5_load_gpu_mem_clock_avg_mhz",
+    "t5_prefill_sample_count",
+    "t5_prefill_cpu_util_avg_pct",
+    "t5_prefill_cpu_util_max_pct",
+    "t5_prefill_gpu_util_avg_pct",
+    "t5_prefill_gpu_util_max_pct",
+    "t5_prefill_gpu_mem_util_avg_pct",
+    "t5_prefill_gpu_mem_util_max_pct",
+    "t5_prefill_gpu_power_avg_w",
+    "t5_prefill_gpu_power_max_w",
+    "t5_prefill_gpu_sm_clock_avg_mhz",
+    "t5_prefill_gpu_mem_clock_avg_mhz",
+    "t5_decode_sample_count",
+    "t5_decode_cpu_util_avg_pct",
+    "t5_decode_cpu_util_max_pct",
+    "t5_decode_gpu_util_avg_pct",
+    "t5_decode_gpu_util_max_pct",
+    "t5_decode_gpu_mem_util_avg_pct",
+    "t5_decode_gpu_mem_util_max_pct",
+    "t5_decode_gpu_power_avg_w",
+    "t5_decode_gpu_power_max_w",
+    "t5_decode_gpu_sm_clock_avg_mhz",
+    "t5_decode_gpu_mem_clock_avg_mhz",
     "t6_first_ms",
     "t6_final_ms",
     "e2e_local_first_ms",
@@ -335,6 +368,39 @@ function buildMessageCsv(messages: LatencyMessageSummary[]): string {
       message.hardwareLlm?.gpuMemClockAvgMHz,
       message.hardwareLlm?.gpuMemClockMaxMHz,
       message.hardwareLlm?.computePlacement,
+      message.hardwareT5Load?.sampleCount,
+      message.hardwareT5Load?.cpuUtilAvgPct,
+      message.hardwareT5Load?.cpuUtilMaxPct,
+      message.hardwareT5Load?.gpuUtilAvgPct,
+      message.hardwareT5Load?.gpuUtilMaxPct,
+      message.hardwareT5Load?.gpuMemUtilAvgPct,
+      message.hardwareT5Load?.gpuMemUtilMaxPct,
+      message.hardwareT5Load?.gpuPowerAvgW,
+      message.hardwareT5Load?.gpuPowerMaxW,
+      message.hardwareT5Load?.gpuSmClockAvgMHz,
+      message.hardwareT5Load?.gpuMemClockAvgMHz,
+      message.hardwareT5Prefill?.sampleCount,
+      message.hardwareT5Prefill?.cpuUtilAvgPct,
+      message.hardwareT5Prefill?.cpuUtilMaxPct,
+      message.hardwareT5Prefill?.gpuUtilAvgPct,
+      message.hardwareT5Prefill?.gpuUtilMaxPct,
+      message.hardwareT5Prefill?.gpuMemUtilAvgPct,
+      message.hardwareT5Prefill?.gpuMemUtilMaxPct,
+      message.hardwareT5Prefill?.gpuPowerAvgW,
+      message.hardwareT5Prefill?.gpuPowerMaxW,
+      message.hardwareT5Prefill?.gpuSmClockAvgMHz,
+      message.hardwareT5Prefill?.gpuMemClockAvgMHz,
+      message.hardwareT5Decode?.sampleCount,
+      message.hardwareT5Decode?.cpuUtilAvgPct,
+      message.hardwareT5Decode?.cpuUtilMaxPct,
+      message.hardwareT5Decode?.gpuUtilAvgPct,
+      message.hardwareT5Decode?.gpuUtilMaxPct,
+      message.hardwareT5Decode?.gpuMemUtilAvgPct,
+      message.hardwareT5Decode?.gpuMemUtilMaxPct,
+      message.hardwareT5Decode?.gpuPowerAvgW,
+      message.hardwareT5Decode?.gpuPowerMaxW,
+      message.hardwareT5Decode?.gpuSmClockAvgMHz,
+      message.hardwareT5Decode?.gpuMemClockAvgMHz,
       message.t6FeishuFirstAckMs,
       message.t6FeishuFinalAckMs,
       message.localFirstVisibleMs,
@@ -580,9 +646,29 @@ function renderMessageCards(
             ${renderHardwareWindowCard("LLM Inference Hardware", message.hardwareLlm)}
             ${renderHardwareWindowCard("Overall Message Hardware", message.hardwareOverall)}
           </div>
+          ${renderT5PhaseHardwareSection(message)}
         </article>`;
     })
     .join("");
+}
+
+function renderT5PhaseHardwareSection(message: LatencyMessageSummary): string {
+  const phases: Array<[string, HardwareWindowSummary | undefined]> = [
+    ["T5 Load Hardware", message.hardwareT5Load],
+    ["T5 Prefill Hardware", message.hardwareT5Prefill],
+    ["T5 Decode Hardware", message.hardwareT5Decode],
+  ];
+  if (!phases.some(([, summary]) => summary?.sampleCount)) {
+    return "";
+  }
+  return `
+    <section class="panel" style="margin-top:16px">
+      <h3>T5 Phase Hardware Breakdown</h3>
+      <p class="section-note">These cards align hardware samples to the reconstructed T5 sub-stage windows. GPU memory utilization and memory clock remain bandwidth proxies; GPU memory used, SM clock, and power are direct sampled counters when available.</p>
+      <div class="message-hardware-grid">
+        ${phases.map(([title, summary]) => renderHardwareWindowCard(title, summary)).join("")}
+      </div>
+    </section>`;
 }
 
 function renderHardwareWindowCard(title: string, summary?: HardwareWindowSummary): string {
