@@ -215,6 +215,10 @@ describe("latency-trace-report", () => {
               memoryUsedMiB: 10,
               memoryTotalMiB: 20,
               powerDrawW: 100,
+              memBandwidthEstimateGBps: 120,
+              memBandwidthPeakGBps: 240,
+              pcieLinkGenCurrent: 5,
+              pcieLinkWidthCurrent: 16,
             },
           ],
         },
@@ -236,6 +240,10 @@ describe("latency-trace-report", () => {
               memoryUsedMiB: 12,
               memoryTotalMiB: 20,
               powerDrawW: 120,
+              memBandwidthEstimateGBps: 150,
+              memBandwidthPeakGBps: 240,
+              pcieLinkGenCurrent: 5,
+              pcieLinkWidthCurrent: 16,
             },
           ],
         },
@@ -249,6 +257,10 @@ describe("latency-trace-report", () => {
     expect(report.messages[0]?.hardwareGpuMemUtilAvgPct).toBe(55);
     expect(report.messages[0]?.hardwareGpuPowerAvgW).toBe(110);
     expect(report.messages[0]?.hardwareLlm?.gpuUtilMaxPct).toBe(80);
+    expect(report.messages[0]?.hardwareLlm?.gpuMemBandwidthEstimateAvgGBps).toBe(135);
+    expect(report.messages[0]?.hardwareLlm?.gpuMemBandwidthPeakAvgGBps).toBe(240);
+    expect(report.messages[0]?.hardwareLlm?.gpuPcieLinkGenAvg).toBe(5);
+    expect(report.messages[0]?.hardwareLlm?.gpuPcieLinkWidthAvg).toBe(16);
   });
 
   it("aligns T5 load, prefill, and decode windows to hardware samples", () => {

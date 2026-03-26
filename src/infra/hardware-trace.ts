@@ -36,6 +36,12 @@ export type HardwareGpuSample = {
   powerDrawW?: number;
   smClockMHz?: number;
   memClockMHz?: number;
+  maxMemClockMHz?: number;
+  memoryBusWidthBits?: number;
+  memBandwidthPeakGBps?: number;
+  memBandwidthEstimateGBps?: number;
+  pcieLinkGenCurrent?: number;
+  pcieLinkWidthCurrent?: number;
   temperatureC?: number;
 };
 
@@ -104,7 +110,7 @@ async function collectNvidiaGpuSamples(): Promise<HardwareGpuSample[] | undefine
     const { stdout } = await execFileAsync(
       "nvidia-smi",
       [
-        "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem,temperature.gpu",
+        "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem,clocks.max.mem,memory.bus_width,pcie.link.gen.current,pcie.link.width.current,temperature.gpu",
         "--format=csv,noheader,nounits",
       ],
       { timeout: 800, maxBuffer: 1024 * 1024 },
@@ -128,23 +134,107 @@ async function collectNvidiaGpuSamples(): Promise<HardwareGpuSample[] | undefine
         powerDrawW,
         smClockMHz,
         memClockMHz,
+        maxMemClockMHz,
+        memoryBusWidthBits,
+        pcieLinkGenCurrent,
+        pcieLinkWidthCurrent,
         temperatureC,
       ] = row.split(",").map((value) => value.trim());
+      const utilizationMem = toNumber(utilizationMemPct);
+      const memClock = toNumber(memClockMHz);
+      const maxMemClock = toNumber(maxMemClockMHz);
+      const memoryBusWidth = toNumber(memoryBusWidthBits);
+      const memBandwidthPeakGBps =
+        typeof maxMemClock === "number" &&
+        Number.isFinite(maxMemClock) &&
+        maxMemClock > 0 &&
+        typeof memoryBusWidth === "number" &&
+        Number.isFinite(memoryBusWidth) &&
+        memoryBusWidth > 0
+          ? (maxMemClock * (memoryBusWidth / 8) * 2) / 1000
+          : undefined;
+      const memBandwidthCurrentCapGBps =
+        typeof memClock === "number" &&
+        Number.isFinite(memClock) &&
+        memClock > 0 &&
+        typeof memoryBusWidth === "number" &&
+        Number.isFinite(memoryBusWidth) &&
+        memoryBusWidth > 0
+          ? (memClock * (memoryBusWidth / 8) * 2) / 1000
+          : undefined;
       return {
         index: toNumber(index),
         name,
         utilizationGpuPct: toNumber(utilizationGpuPct),
-        utilizationMemPct: toNumber(utilizationMemPct),
+        utilizationMemPct: utilizationMem,
         memoryUsedMiB: toNumber(memoryUsedMiB),
         memoryTotalMiB: toNumber(memoryTotalMiB),
         powerDrawW: toNumber(powerDrawW),
         smClockMHz: toNumber(smClockMHz),
-        memClockMHz: toNumber(memClockMHz),
+        memClockMHz: memClock,
+        maxMemClockMHz: maxMemClock,
+        memoryBusWidthBits: memoryBusWidth,
+        memBandwidthPeakGBps,
+        memBandwidthEstimateGBps:
+          typeof utilizationMem === "number" &&
+          Number.isFinite(utilizationMem) &&
+          utilizationMem >= 0 &&
+          typeof memBandwidthCurrentCapGBps === "number" &&
+          Number.isFinite(memBandwidthCurrentCapGBps)
+            ? (utilizationMem / 100) * memBandwidthCurrentCapGBps
+            : undefined,
+        pcieLinkGenCurrent: toNumber(pcieLinkGenCurrent),
+        pcieLinkWidthCurrent: toNumber(pcieLinkWidthCurrent),
         temperatureC: toNumber(temperatureC),
       } satisfies HardwareGpuSample;
     });
   } catch {
-    return undefined;
+    try {
+      const { stdout } = await execFileAsync(
+        "nvidia-smi",
+        [
+          "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem,temperature.gpu",
+          "--format=csv,noheader,nounits",
+        ],
+        { timeout: 800, maxBuffer: 1024 * 1024 },
+      );
+      const rows = stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (rows.length === 0) {
+        return undefined;
+      }
+      return rows.map((row) => {
+        const [
+          index,
+          name,
+          utilizationGpuPct,
+          utilizationMemPct,
+          memoryUsedMiB,
+          memoryTotalMiB,
+          powerDrawW,
+          smClockMHz,
+          memClockMHz,
+          temperatureC,
+        ] = row.split(",").map((value) => value.trim());
+        return {
+          index: toNumber(index),
+          name,
+          utilizationGpuPct: toNumber(utilizationGpuPct),
+          utilizationMemPct: toNumber(utilizationMemPct),
+          memoryUsedMiB: toNumber(memoryUsedMiB),
+          memoryTotalMiB: toNumber(memoryTotalMiB),
+          powerDrawW: toNumber(powerDrawW),
+          smClockMHz: toNumber(smClockMHz),
+          memClockMHz: toNumber(memClockMHz),
+          temperatureC: toNumber(temperatureC),
+        } satisfies HardwareGpuSample;
+      });
+    } catch {
+      return undefined;
+    }
   }
 }
 
