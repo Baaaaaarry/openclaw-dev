@@ -24,6 +24,7 @@ type ChartMetric = {
   unit: string;
   points: Array<{ x: number; y?: number }>;
   xMarkers?: Array<{ x: number; label: string }>;
+  xAxisLabel?: string;
 };
 
 type MetricSummary = {
@@ -452,9 +453,10 @@ function buildMessageWindowMetric(params: {
   kind: "cpu" | "gpu";
   samples: HardwareTraceSample[];
 }): ChartMetric {
+  const overallStartedAtMs = params.message.overallWindowStartedAtMs;
   const scopedSamples = filterSamplesForWindow(
     params.samples,
-    params.message.overallWindowStartedAtMs,
+    overallStartedAtMs,
     params.message.overallWindowEndedAtMs,
   );
   return {
@@ -465,49 +467,45 @@ function buildMessageWindowMetric(params: {
         : "GPU Utilization (T1-T6 Interval)",
     unit: "%",
     points: scopedSamples.map((sample, index) => ({
-      x: index,
+      x:
+        typeof overallStartedAtMs === "number" && Number.isFinite(overallStartedAtMs)
+          ? Math.max(0, sample.epochMs - overallStartedAtMs)
+          : index,
       y: params.kind === "cpu" ? sample.cpuUtilPct : deriveGpuUtilForSample(sample),
     })),
-    xMarkers: buildMessageStageMarkers(params.message, scopedSamples.length),
+    xMarkers: buildMessageStageMarkers(params.message),
+    xAxisLabel: "Elapsed Time (ms)",
   };
 }
 
 function buildMessageStageMarkers(
   message: LatencyMessageSummary,
-  sampleCount: number,
 ): Array<{ x: number; label: string }> {
-  if (sampleCount <= 1) {
+  const overallStartedAtMs = message.overallWindowStartedAtMs;
+  if (typeof overallStartedAtMs !== "number" || !Number.isFinite(overallStartedAtMs)) {
     return [];
   }
-  const stages: Array<{ label: string; durationMs?: number }> = [
-    { label: "T1", durationMs: message.t1FeishuInboundMs },
-    { label: "T2", durationMs: message.t2GatewayEnqueueMs },
-    { label: "T3", durationMs: message.t3WorkerQueueWaitMs },
-    { label: "T4", durationMs: message.t4AgentPreprocessMs },
-    { label: "T5", durationMs: message.t5LlmTotalMs },
-    { label: "T6", durationMs: message.t6FeishuFinalAckMs },
+  const stages: Array<{ label: string; endedAtMs?: number }> = [
+    { label: "T1", endedAtMs: message.t1WindowEndedAtMs },
+    { label: "T2", endedAtMs: message.t2WindowEndedAtMs },
+    { label: "T3", endedAtMs: message.t3WindowEndedAtMs },
+    { label: "T4", endedAtMs: message.t4WindowEndedAtMs },
+    { label: "T5", endedAtMs: message.t5WindowEndedAtMs },
+    { label: "T6", endedAtMs: message.t6WindowEndedAtMs },
   ];
-  const totalDurationMs = stages.reduce((sum, stage) => {
-    const durationMs = stage.durationMs;
-    return typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0
-      ? sum + durationMs
-      : sum;
-  }, 0);
-  if (totalDurationMs <= 0) {
-    return [];
-  }
-
-  let cumulativeDurationMs = 0;
   return stages
     .map((stage) => {
-      const durationMs = stage.durationMs;
-      if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+      const endedAtMs = stage.endedAtMs;
+      if (
+        typeof endedAtMs !== "number" ||
+        !Number.isFinite(endedAtMs) ||
+        endedAtMs < overallStartedAtMs
+      ) {
         return undefined;
       }
-      cumulativeDurationMs += durationMs;
       return {
         label: stage.label,
-        x: ((sampleCount - 1) * cumulativeDurationMs) / totalDurationMs,
+        x: endedAtMs - overallStartedAtMs,
       };
     })
     .filter((marker): marker is { x: number; label: string } => marker !== undefined);
@@ -761,30 +759,35 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
       title: "CPU Utilization",
       unit: "%",
       points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.cpuUtilPct })),
+      xAxisLabel: "Elapsed Time (ms)",
     },
     {
       id: "mem-util",
       title: "System Memory Utilization",
       unit: "%",
       points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.memUtilPct })),
+      xAxisLabel: "Elapsed Time (ms)",
     },
     {
       id: "load-1",
       title: "Load Average 1m",
       unit: "load",
       points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg1 })),
+      xAxisLabel: "Elapsed Time (ms)",
     },
     {
       id: "load-5",
       title: "Load Average 5m",
       unit: "load",
       points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg5 })),
+      xAxisLabel: "Elapsed Time (ms)",
     },
     {
       id: "load-15",
       title: "Load Average 15m",
       unit: "load",
       points: samples.map((sample) => ({ x: toX(sample.epochMs), y: sample.loadAvg15 })),
+      xAxisLabel: "Elapsed Time (ms)",
     },
   ];
 
@@ -810,6 +813,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.utilizationGpuPct,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-mem-util`,
@@ -824,6 +828,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
               ? ((getGpu(sample)?.memoryUsedMiB ?? 0) / (getGpu(sample)?.memoryTotalMiB ?? 1)) * 100
               : getGpu(sample)?.utilizationMemPct,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-mem-used`,
@@ -833,6 +838,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.memoryUsedMiB,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-mem-total`,
@@ -842,6 +848,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.memoryTotalMiB,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-power`,
@@ -851,6 +858,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.powerDrawW,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-sm-clock`,
@@ -860,6 +868,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.smClockMHz,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-mem-clock`,
@@ -869,6 +878,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.memClockMHz,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
       {
         id: `gpu-${gpuIndex}-temperature`,
@@ -878,6 +888,7 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
           x: toX(sample.epochMs),
           y: getGpu(sample)?.temperatureC,
         })),
+        xAxisLabel: "Elapsed Time (ms)",
       },
     );
   }
@@ -932,11 +943,11 @@ function resolveYAxisLabel(metric: ChartMetric): string {
 
 function renderChartSvg(metric: ChartMetric): string {
   const width = 760;
-  const height = 220;
-  const paddingLeft = 52;
-  const paddingRight = 26;
-  const paddingTop = 48;
-  const paddingBottom = 34;
+  const height = 248;
+  const paddingLeft = 128;
+  const paddingRight = 42;
+  const paddingTop = 56;
+  const paddingBottom = 62;
   const summary = summarizeChartMetric(metric);
   const numericPoints = metric.points.filter(
     (point): point is { x: number; y: number } =>
@@ -967,26 +978,45 @@ function renderChartSvg(metric: ChartMetric): string {
   const min = Math.min(...numericPoints.map((point) => point.y));
   const max = Math.max(...numericPoints.map((point) => point.y));
   const avg = summary.avg;
-  const xAxisLabel = "Sample Index";
+  const xAxisLabel = metric.xAxisLabel ?? "Sample Index";
   const yAxisLabel = resolveYAxisLabel(metric);
   const lineY = (value: number) =>
     height - paddingBottom - ((value - minY) / ySpan) * (height - paddingTop - paddingBottom);
   const avgGuideY = typeof avg === "number" ? lineY(avg) : undefined;
   const maxGuideY = lineY(max);
   const minGuideY = lineY(min);
-  const yTicks = [
+  const rawYTicks = [
     { label: `max ${formatUnit(metric.unit, max)}`, y: maxGuideY },
     ...(typeof avgGuideY === "number"
       ? [{ label: `avg ${formatUnit(metric.unit, avg)}`, y: avgGuideY }]
       : []),
     { label: `min ${formatUnit(metric.unit, min)}`, y: minGuideY },
   ];
+  const yTicks = rawYTicks.reduce<Array<{ label: string; y: number }>>((ticks, tick) => {
+    const previous = ticks.at(-1);
+    if (previous && Math.abs(previous.y - tick.y) < 12) {
+      previous.label = `${previous.label} · ${tick.label}`;
+      return ticks;
+    }
+    ticks.push({ ...tick });
+    return ticks;
+  }, []);
   const xMarkers = (metric.xMarkers ?? [])
     .map((marker) => ({
       ...marker,
       x: paddingLeft + ((marker.x - minX) / xSpan) * (width - paddingLeft - paddingRight),
     }))
     .filter((marker) => Number.isFinite(marker.x));
+  const stagedMarkers = xMarkers
+    .toSorted((left, right) => left.x - right.x)
+    .map((marker, index, markers) => {
+      const previous = markers[index - 1];
+      const crowded = previous ? marker.x - previous.x < 28 : false;
+      return {
+        ...marker,
+        labelY: height - paddingBottom + (crowded ? 28 : 16),
+      };
+    });
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
       <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
@@ -1003,7 +1033,7 @@ function renderChartSvg(metric: ChartMetric): string {
           : ""
       }
       <line x1="${paddingLeft}" y1="${maxGuideY.toFixed(1)}" x2="${width - paddingRight}" y2="${maxGuideY.toFixed(1)}" class="guide max-guide" />
-      ${xMarkers
+      ${stagedMarkers
         .map(
           (marker) =>
             `<line x1="${marker.x.toFixed(1)}" y1="${paddingTop}" x2="${marker.x.toFixed(1)}" y2="${height - paddingBottom}" class="guide stage-guide" />`,
@@ -1018,15 +1048,15 @@ function renderChartSvg(metric: ChartMetric): string {
             `<text x="${paddingLeft - 8}" y="${(tick.y + 4).toFixed(1)}" text-anchor="end" class="axis-label">${escapeHtml(tick.label)}</text>`,
         )
         .join("")}
-      ${xMarkers
+      ${stagedMarkers
         .map(
           (marker) =>
-            `<text x="${marker.x.toFixed(1)}" y="${height - paddingBottom + 16}" text-anchor="middle" class="axis-label">${escapeHtml(marker.label)}</text>`,
+            `<text x="${marker.x.toFixed(1)}" y="${marker.labelY.toFixed(1)}" text-anchor="middle" class="axis-label">${escapeHtml(marker.label)}</text>`,
         )
         .join("")}
-      <text x="${width - paddingRight}" y="${paddingTop - 8}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
-      <text x="${(paddingLeft + width - paddingRight) / 2}" y="${height - 6}" text-anchor="middle" class="axis-label">${escapeHtml(xAxisLabel)}</text>
-      <text x="14" y="${height / 2}" text-anchor="middle" transform="rotate(-90 14 ${height / 2})" class="axis-label">${escapeHtml(yAxisLabel)}</text>
+      <text x="${width - paddingRight}" y="${paddingTop - 18}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
+      <text x="${(paddingLeft + width - paddingRight) / 2}" y="${height - 10}" text-anchor="middle" class="axis-label">${escapeHtml(xAxisLabel)}</text>
+      <text x="18" y="${height / 2}" text-anchor="middle" transform="rotate(-90 18 ${height / 2})" class="axis-label">${escapeHtml(yAxisLabel)}</text>
     </svg>`;
 }
 

@@ -84,9 +84,17 @@ export type LatencyMessageSummary = {
   provider?: string;
   model?: string;
   t1FeishuInboundMs?: number;
+  t1WindowStartedAtMs?: number;
+  t1WindowEndedAtMs?: number;
   t2GatewayEnqueueMs?: number;
+  t2WindowStartedAtMs?: number;
+  t2WindowEndedAtMs?: number;
   t3WorkerQueueWaitMs?: number;
+  t3WindowStartedAtMs?: number;
+  t3WindowEndedAtMs?: number;
   t4AgentPreprocessMs?: number;
+  t4WindowStartedAtMs?: number;
+  t4WindowEndedAtMs?: number;
   t4RagRecallMs?: number;
   t4RagRecallResults?: number;
   t5LlmCallCount?: number;
@@ -124,6 +132,8 @@ export type LatencyMessageSummary = {
   hardwareGpuPowerAvgW?: number;
   t6FeishuFirstAckMs?: number;
   t6FeishuFinalAckMs?: number;
+  t6WindowStartedAtMs?: number;
+  t6WindowEndedAtMs?: number;
   localFirstVisibleMs?: number;
   localCompleteMs?: number;
 };
@@ -305,19 +315,79 @@ function updateOverallWindow(
   }
 }
 
+function updateStageWindow(
+  summary: LatencyMessageSummary,
+  keys: {
+    started:
+      | "t1WindowStartedAtMs"
+      | "t2WindowStartedAtMs"
+      | "t3WindowStartedAtMs"
+      | "t4WindowStartedAtMs"
+      | "t6WindowStartedAtMs";
+    ended:
+      | "t1WindowEndedAtMs"
+      | "t2WindowEndedAtMs"
+      | "t3WindowEndedAtMs"
+      | "t4WindowEndedAtMs"
+      | "t6WindowEndedAtMs";
+  },
+  record: Pick<PersistedLatencySegmentRecord, "startedAtMs" | "endedAtMs">,
+): void {
+  if (typeof record.startedAtMs === "number" && Number.isFinite(record.startedAtMs)) {
+    const currentStarted = summary[keys.started];
+    if (
+      typeof currentStarted !== "number" ||
+      !Number.isFinite(currentStarted) ||
+      record.startedAtMs < currentStarted
+    ) {
+      summary[keys.started] = record.startedAtMs;
+    }
+  }
+  if (typeof record.endedAtMs === "number" && Number.isFinite(record.endedAtMs)) {
+    const currentEnded = summary[keys.ended];
+    if (
+      typeof currentEnded !== "number" ||
+      !Number.isFinite(currentEnded) ||
+      record.endedAtMs > currentEnded
+    ) {
+      summary[keys.ended] = record.endedAtMs;
+    }
+  }
+}
+
 function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySegmentRecord): void {
   updateOverallWindow(summary, record);
   switch (record.segment) {
     case "t1_feishu_inbound":
       summary.t1FeishuInboundMs = record.durationMs;
+      updateStageWindow(
+        summary,
+        { started: "t1WindowStartedAtMs", ended: "t1WindowEndedAtMs" },
+        record,
+      );
       return;
     case "t2_gateway_enqueue":
       summary.t2GatewayEnqueueMs = record.durationMs;
+      updateStageWindow(
+        summary,
+        { started: "t2WindowStartedAtMs", ended: "t2WindowEndedAtMs" },
+        record,
+      );
       return;
     case "t3_worker_queue_wait":
       summary.t3WorkerQueueWaitMs = record.durationMs;
+      updateStageWindow(
+        summary,
+        { started: "t3WindowStartedAtMs", ended: "t3WindowEndedAtMs" },
+        record,
+      );
       return;
     case "t4_agent_preprocess":
+      updateStageWindow(
+        summary,
+        { started: "t4WindowStartedAtMs", ended: "t4WindowEndedAtMs" },
+        record,
+      );
       if (record.stage === "rag_recall") {
         summary.t4RagRecallMs = record.durationMs;
         summary.t4RagRecallResults =
@@ -410,6 +480,11 @@ function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySe
       }
       return;
     case "t6_feishu_return":
+      updateStageWindow(
+        summary,
+        { started: "t6WindowStartedAtMs", ended: "t6WindowEndedAtMs" },
+        record,
+      );
       if (record.stage === "first_ack") {
         summary.t6FeishuFirstAckMs = record.durationMs;
       }
