@@ -123,6 +123,45 @@ describe("latency-trace-visualize", () => {
           memUtilPct: 70,
           gpus: [{ index: 0, utilizationGpuPct: 82 }],
         },
+        {
+          ts: "2026-01-01T00:00:01.400Z",
+          epochMs: 1_400,
+          cpuUtilPct: 35,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 28,
+          memUsedBytes: 72,
+          memUtilPct: 72,
+          gpus: [{ index: 0, utilizationGpuPct: 84 }],
+        },
+        {
+          ts: "2026-01-01T00:00:01.600Z",
+          epochMs: 1_600,
+          cpuUtilPct: 31,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 27,
+          memUsedBytes: 73,
+          memUtilPct: 73,
+          gpus: [{ index: 0, utilizationGpuPct: 86 }],
+        },
+        {
+          ts: "2026-01-01T00:00:01.800Z",
+          epochMs: 1_800,
+          cpuUtilPct: 29,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 26,
+          memUsedBytes: 74,
+          memUtilPct: 74,
+          gpus: [{ index: 0, utilizationGpuPct: 88 }],
+        },
       ],
     });
     expect(html).toContain("<!doctype html>");
@@ -133,7 +172,10 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("GPU Utilization (T1-T6 Interval)");
     expect(html).toContain("Sample Index");
     expect(html).toContain("Utilization (%)");
-    expect(html).toContain("avg 32.0%");
+    expect(html).toContain("avg 31.8%");
+    expect(html).toContain(">T1<");
+    expect(html).toContain(">T5<");
+    expect(html).toContain(">T6<");
     expect(html).toContain("RAG vs No-RAG Comparison");
     expect(html).toContain("Download timeline SVG");
     expect(html).toContain("Download CPU SVG");
