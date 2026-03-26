@@ -452,90 +452,75 @@ function buildMessageWindowMetric(params: {
   message: LatencyMessageSummary;
   kind: "cpu" | "gpu";
   samples: HardwareTraceSample[];
+  range?: "overall" | "t1ToT4";
 }): ChartMetric {
-  const overallStartedAtMs = params.message.overallWindowStartedAtMs;
-  const scopedSamples = filterSamplesForWindow(
-    params.samples,
-    overallStartedAtMs,
-    params.message.overallWindowEndedAtMs,
-  );
+  const range = params.range ?? "overall";
+  const startedAtMs =
+    range === "t1ToT4"
+      ? params.message.overallWindowStartedAtMs
+      : params.message.overallWindowStartedAtMs;
+  const endedAtMs =
+    range === "t1ToT4" ? params.message.t4WindowEndedAtMs : params.message.overallWindowEndedAtMs;
+  const scopedSamples = filterSamplesForWindow(params.samples, startedAtMs, endedAtMs);
   return {
-    id: `${params.message.key}-${params.kind}-window`,
+    id: `${params.message.key}-${params.kind}-${range}-window`,
     title:
       params.kind === "cpu"
-        ? "CPU Utilization (T1-T6 Interval)"
-        : "GPU Utilization (T1-T6 Interval)",
+        ? range === "t1ToT4"
+          ? "CPU Utilization (T1-T4 Interval)"
+          : "CPU Utilization (T1-T6 Interval)"
+        : range === "t1ToT4"
+          ? "GPU Utilization (T1-T4 Interval)"
+          : "GPU Utilization (T1-T6 Interval)",
     unit: "%",
     points: scopedSamples.map((sample, index) => ({
       x:
-        typeof overallStartedAtMs === "number" && Number.isFinite(overallStartedAtMs)
-          ? Math.max(0, sample.epochMs - overallStartedAtMs)
+        typeof startedAtMs === "number" && Number.isFinite(startedAtMs)
+          ? Math.max(0, sample.epochMs - startedAtMs)
           : index,
       y: params.kind === "cpu" ? sample.cpuUtilPct : deriveGpuUtilForSample(sample),
     })),
-    xMarkers: buildMessageStageMarkers(params.message),
+    xMarkers: buildMessageStageMarkers(params.message, range),
     xAxisLabel: "Elapsed Time (ms)",
   };
 }
 
 function buildMessageStageMarkers(
   message: LatencyMessageSummary,
+  range: "overall" | "t1ToT4" = "overall",
 ): Array<{ x: number; label: string }> {
-  const overallStartedAtMs = message.overallWindowStartedAtMs;
-  if (typeof overallStartedAtMs !== "number" || !Number.isFinite(overallStartedAtMs)) {
+  const startedAtMs = message.overallWindowStartedAtMs;
+  if (typeof startedAtMs !== "number" || !Number.isFinite(startedAtMs)) {
     return [];
   }
-  const stages: Array<{ label: string; endedAtMs?: number }> = [
-    { label: "T1", endedAtMs: message.t1WindowEndedAtMs },
-    { label: "T2", endedAtMs: message.t2WindowEndedAtMs },
-    { label: "T3", endedAtMs: message.t3WindowEndedAtMs },
-    { label: "T4", endedAtMs: message.t4WindowEndedAtMs },
-    { label: "T5", endedAtMs: message.t5WindowEndedAtMs },
-    { label: "T6", endedAtMs: message.t6WindowEndedAtMs },
-  ];
-  const markers = stages
+  const stages: Array<{ label: string; endedAtMs?: number }> =
+    range === "t1ToT4"
+      ? [
+          { label: "T1", endedAtMs: message.t1WindowEndedAtMs },
+          { label: "T2", endedAtMs: message.t2WindowEndedAtMs },
+          { label: "T3", endedAtMs: message.t3WindowEndedAtMs },
+          { label: "T4", endedAtMs: message.t4WindowEndedAtMs },
+        ]
+      : [
+          { label: "T1", endedAtMs: message.t1WindowEndedAtMs },
+          { label: "T2", endedAtMs: message.t2WindowEndedAtMs },
+          { label: "T3", endedAtMs: message.t3WindowEndedAtMs },
+          { label: "T4", endedAtMs: message.t4WindowEndedAtMs },
+          { label: "T5", endedAtMs: message.t5WindowEndedAtMs },
+          { label: "T6", endedAtMs: message.t6WindowEndedAtMs },
+        ];
+  return stages
     .map((stage) => {
       const endedAtMs = stage.endedAtMs;
-      if (
-        typeof endedAtMs !== "number" ||
-        !Number.isFinite(endedAtMs) ||
-        endedAtMs < overallStartedAtMs
-      ) {
+      if (typeof endedAtMs !== "number" || !Number.isFinite(endedAtMs) || endedAtMs < startedAtMs) {
         return undefined;
       }
       return {
         label: stage.label,
-        x: endedAtMs - overallStartedAtMs,
+        x: endedAtMs - startedAtMs,
       };
     })
     .filter((marker): marker is { x: number; label: string } => marker !== undefined);
-  if (
-    typeof message.t4RagRecallResults === "number" &&
-    Number.isFinite(message.t4RagRecallResults) &&
-    message.t4RagRecallResults > 0
-  ) {
-    if (
-      typeof message.ragWindowStartedAtMs === "number" &&
-      Number.isFinite(message.ragWindowStartedAtMs) &&
-      message.ragWindowStartedAtMs >= overallStartedAtMs
-    ) {
-      markers.push({
-        label: "RAG.start",
-        x: message.ragWindowStartedAtMs - overallStartedAtMs,
-      });
-    }
-    if (
-      typeof message.ragWindowEndedAtMs === "number" &&
-      Number.isFinite(message.ragWindowEndedAtMs) &&
-      message.ragWindowEndedAtMs >= overallStartedAtMs
-    ) {
-      markers.push({
-        label: "RAG.end",
-        x: message.ragWindowEndedAtMs - overallStartedAtMs,
-      });
-    }
-  }
-  return markers;
 }
 
 function renderMessageUtilCharts(
@@ -543,8 +528,40 @@ function renderMessageUtilCharts(
   index: number,
   hardwareSamples: HardwareTraceSample[],
 ): string {
-  const cpuMetric = buildMessageWindowMetric({ message, kind: "cpu", samples: hardwareSamples });
-  const gpuMetric = buildMessageWindowMetric({ message, kind: "gpu", samples: hardwareSamples });
+  const cpuMetric = buildMessageWindowMetric({
+    message,
+    kind: "cpu",
+    samples: hardwareSamples,
+    range: "overall",
+  });
+  const gpuMetric = buildMessageWindowMetric({
+    message,
+    kind: "gpu",
+    samples: hardwareSamples,
+    range: "overall",
+  });
+  const ragCpuMetric =
+    typeof message.t4RagRecallResults === "number" &&
+    Number.isFinite(message.t4RagRecallResults) &&
+    message.t4RagRecallResults > 0
+      ? buildMessageWindowMetric({
+          message,
+          kind: "cpu",
+          samples: hardwareSamples,
+          range: "t1ToT4",
+        })
+      : undefined;
+  const ragGpuMetric =
+    typeof message.t4RagRecallResults === "number" &&
+    Number.isFinite(message.t4RagRecallResults) &&
+    message.t4RagRecallResults > 0
+      ? buildMessageWindowMetric({
+          message,
+          kind: "gpu",
+          samples: hardwareSamples,
+          range: "t1ToT4",
+        })
+      : undefined;
   return `
     <div class="message-chart-grid">
       <article class="chart-card" data-chart-id="message-${index}-cpu-window">
@@ -561,6 +578,28 @@ function renderMessageUtilCharts(
         </div>
         ${renderChartSvg(gpuMetric)}
       </article>
+      ${
+        ragCpuMetric
+          ? `<article class="chart-card" data-chart-id="message-${index}-cpu-t1t4-window">
+        <div class="chart-header">
+          <div class="chart-title">${escapeHtml(ragCpuMetric.title)}</div>
+          <div class="chart-subtitle">${escapeHtml(message.messageId ? String(message.messageId) : message.key)}</div>
+        </div>
+        ${renderChartSvg(ragCpuMetric)}
+      </article>`
+          : ""
+      }
+      ${
+        ragGpuMetric
+          ? `<article class="chart-card" data-chart-id="message-${index}-gpu-t1t4-window">
+        <div class="chart-header">
+          <div class="chart-title">${escapeHtml(ragGpuMetric.title)}</div>
+          <div class="chart-subtitle">${escapeHtml(message.messageId ? String(message.messageId) : message.key)}</div>
+        </div>
+        ${renderChartSvg(ragGpuMetric)}
+      </article>`
+          : ""
+      }
     </div>`;
 }
 
