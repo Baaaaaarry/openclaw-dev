@@ -26,6 +26,14 @@ export type HardwareWindowSummary = {
   gpuSmClockMaxMHz?: number;
   gpuMemClockAvgMHz?: number;
   gpuMemClockMaxMHz?: number;
+  gpuMemBandwidthEstimateAvgGBps?: number;
+  gpuMemBandwidthEstimateMaxGBps?: number;
+  gpuMemBandwidthPeakAvgGBps?: number;
+  gpuMemBandwidthPeakMaxGBps?: number;
+  gpuPcieLinkGenAvg?: number;
+  gpuPcieLinkGenMax?: number;
+  gpuPcieLinkWidthAvg?: number;
+  gpuPcieLinkWidthMax?: number;
   gpuTempAvgC?: number;
   gpuTempMaxC?: number;
   computePlacement?: "cpu-biased" | "gpu-biased" | "mixed" | "unclear";
@@ -761,6 +769,21 @@ function deriveGpuClock(
   );
 }
 
+function deriveGpuFieldMax(
+  sample: HardwareTraceSample,
+  field:
+    | "memBandwidthEstimateGBps"
+    | "memBandwidthPeakGBps"
+    | "pcieLinkGenCurrent"
+    | "pcieLinkWidthCurrent",
+): number | undefined {
+  return maxMaybe(
+    (sample.gpus ?? [])
+      .map((gpu) => gpu[field])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+  );
+}
+
 function deriveGpuTemp(sample: HardwareTraceSample): number | undefined {
   return maxMaybe(
     (sample.gpus ?? [])
@@ -866,6 +889,18 @@ function summarizeHardwareSamples(
   const gpuMemClockValues = windowSamples
     .map((sample) => deriveGpuClock(sample, "memClockMHz"))
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuMemBandwidthEstimateValues = windowSamples
+    .map((sample) => deriveGpuFieldMax(sample, "memBandwidthEstimateGBps"))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuMemBandwidthPeakValues = windowSamples
+    .map((sample) => deriveGpuFieldMax(sample, "memBandwidthPeakGBps"))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuPcieGenValues = windowSamples
+    .map((sample) => deriveGpuFieldMax(sample, "pcieLinkGenCurrent"))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuPcieWidthValues = windowSamples
+    .map((sample) => deriveGpuFieldMax(sample, "pcieLinkWidthCurrent"))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const gpuTempValues = windowSamples
     .map((sample) => deriveGpuTemp(sample))
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
@@ -887,6 +922,14 @@ function summarizeHardwareSamples(
     gpuSmClockMaxMHz: maxMaybe(gpuSmClockValues),
     gpuMemClockAvgMHz: average(gpuMemClockValues),
     gpuMemClockMaxMHz: maxMaybe(gpuMemClockValues),
+    gpuMemBandwidthEstimateAvgGBps: average(gpuMemBandwidthEstimateValues),
+    gpuMemBandwidthEstimateMaxGBps: maxMaybe(gpuMemBandwidthEstimateValues),
+    gpuMemBandwidthPeakAvgGBps: average(gpuMemBandwidthPeakValues),
+    gpuMemBandwidthPeakMaxGBps: maxMaybe(gpuMemBandwidthPeakValues),
+    gpuPcieLinkGenAvg: average(gpuPcieGenValues),
+    gpuPcieLinkGenMax: maxMaybe(gpuPcieGenValues),
+    gpuPcieLinkWidthAvg: average(gpuPcieWidthValues),
+    gpuPcieLinkWidthMax: maxMaybe(gpuPcieWidthValues),
     gpuTempAvgC: average(gpuTempValues),
     gpuTempMaxC: maxMaybe(gpuTempValues),
   };

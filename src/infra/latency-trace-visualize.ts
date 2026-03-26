@@ -433,6 +433,10 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
     "gpuPowerDrawW",
     "gpuSmClockMHz",
     "gpuMemClockMHz",
+    "gpuMemBandwidthEstimateGBps",
+    "gpuMemBandwidthPeakGBps",
+    "gpuPcieLinkGenCurrent",
+    "gpuPcieLinkWidthCurrent",
     "gpuTemperatureC",
   ];
   const rows: string[] = [];
@@ -488,6 +492,10 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
           gpu.powerDrawW,
           gpu.smClockMHz,
           gpu.memClockMHz,
+          gpu.memBandwidthEstimateGBps,
+          gpu.memBandwidthPeakGBps,
+          gpu.pcieLinkGenCurrent,
+          gpu.pcieLinkWidthCurrent,
           gpu.temperatureC,
         ]
           .map(csvEscape)
@@ -693,6 +701,26 @@ function renderHardwareWindowCard(title: string, summary?: HardwareWindowSummary
       "GPU Mem Clock (bandwidth proxy)",
       formatMHz(summary?.gpuMemClockAvgMHz),
       formatMHz(summary?.gpuMemClockMaxMHz),
+    ],
+    [
+      "GPU Mem BW Estimate",
+      formatUnit("GB/s", summary?.gpuMemBandwidthEstimateAvgGBps),
+      formatUnit("GB/s", summary?.gpuMemBandwidthEstimateMaxGBps),
+    ],
+    [
+      "GPU Mem BW Peak",
+      formatUnit("GB/s", summary?.gpuMemBandwidthPeakAvgGBps),
+      formatUnit("GB/s", summary?.gpuMemBandwidthPeakMaxGBps),
+    ],
+    [
+      "GPU PCIe Gen",
+      formatCount(summary?.gpuPcieLinkGenAvg),
+      formatCount(summary?.gpuPcieLinkGenMax),
+    ],
+    [
+      "GPU PCIe Width",
+      formatCount(summary?.gpuPcieLinkWidthAvg),
+      formatCount(summary?.gpuPcieLinkWidthMax),
     ],
     ["GPU Temp", formatUnit("C", summary?.gpuTempAvgC), formatUnit("C", summary?.gpuTempMaxC)],
     ["Placement", summary?.computePlacement ?? "N/A", "N/A"],
@@ -960,6 +988,46 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
         xAxisLabel: "Elapsed Time (ms)",
       },
       {
+        id: `gpu-${gpuIndex}-mem-bw-est`,
+        title: `${gpuLabel} Memory Bandwidth Estimate`,
+        unit: "GB/s",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.memBandwidthEstimateGBps,
+        })),
+        xAxisLabel: "Elapsed Time (ms)",
+      },
+      {
+        id: `gpu-${gpuIndex}-mem-bw-peak`,
+        title: `${gpuLabel} Memory Bandwidth Peak`,
+        unit: "GB/s",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.memBandwidthPeakGBps,
+        })),
+        xAxisLabel: "Elapsed Time (ms)",
+      },
+      {
+        id: `gpu-${gpuIndex}-pcie-gen`,
+        title: `${gpuLabel} PCIe Link Gen`,
+        unit: "gen",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.pcieLinkGenCurrent,
+        })),
+        xAxisLabel: "Elapsed Time (ms)",
+      },
+      {
+        id: `gpu-${gpuIndex}-pcie-width`,
+        title: `${gpuLabel} PCIe Link Width`,
+        unit: "lanes",
+        points: samples.map((sample) => ({
+          x: toX(sample.epochMs),
+          y: getGpu(sample)?.pcieLinkWidthCurrent,
+        })),
+        xAxisLabel: "Elapsed Time (ms)",
+      },
+      {
         id: `gpu-${gpuIndex}-temperature`,
         title: `${gpuLabel} Temperature`,
         unit: "C",
@@ -981,6 +1049,10 @@ function collectHardwareMetrics(samples: HardwareTraceSample[]): ChartMetric[] {
       { id: "gpu-power-na", title: "GPU Power Draw", unit: "W", points: [] },
       { id: "gpu-sm-clock-na", title: "GPU SM Clock", unit: "MHz", points: [] },
       { id: "gpu-mem-clock-na", title: "GPU Memory Clock", unit: "MHz", points: [] },
+      { id: "gpu-mem-bw-est-na", title: "GPU Memory Bandwidth Estimate", unit: "GB/s", points: [] },
+      { id: "gpu-mem-bw-peak-na", title: "GPU Memory Bandwidth Peak", unit: "GB/s", points: [] },
+      { id: "gpu-pcie-gen-na", title: "GPU PCIe Link Gen", unit: "gen", points: [] },
+      { id: "gpu-pcie-width-na", title: "GPU PCIe Link Width", unit: "lanes", points: [] },
       { id: "gpu-temp-na", title: "GPU Temperature", unit: "C", points: [] },
     );
   }
