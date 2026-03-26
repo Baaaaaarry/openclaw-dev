@@ -37,8 +37,20 @@ describe("latency-trace-visualize", () => {
           t6FeishuFinalAckMs: 70,
           localFirstVisibleMs: 260,
           localCompleteMs: 670,
+          t1WindowStartedAtMs: 1_000,
+          t1WindowEndedAtMs: 1_010,
+          t2WindowStartedAtMs: 1_010,
+          t2WindowEndedAtMs: 1_030,
+          t3WindowStartedAtMs: 1_030,
+          t3WindowEndedAtMs: 1_060,
+          t4WindowStartedAtMs: 1_060,
+          t4WindowEndedAtMs: 1_100,
+          t5WindowStartedAtMs: 1_100,
+          t5WindowEndedAtMs: 1_600,
+          t6WindowStartedAtMs: 1_600,
+          t6WindowEndedAtMs: 1_670,
           overallWindowStartedAtMs: 1_000,
-          overallWindowEndedAtMs: 2_000,
+          overallWindowEndedAtMs: 1_670,
           hardwareRag: {
             sampleCount: 1,
             cpuUtilAvgPct: 30,
@@ -170,7 +182,7 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("msg1");
     expect(html).toContain("CPU Utilization (T1-T6 Interval)");
     expect(html).toContain("GPU Utilization (T1-T6 Interval)");
-    expect(html).toContain("Sample Index");
+    expect(html).toContain("Elapsed Time (ms)");
     expect(html).toContain("Utilization (%)");
     expect(html).toContain("avg 31.8%");
     expect(html).toContain(">T1<");
