@@ -23,6 +23,7 @@ type ChartMetric = {
   title: string;
   unit: string;
   points: Array<{ x: number; y?: number }>;
+  xMarkers?: Array<{ x: number; label: string }>;
 };
 
 type MetricSummary = {
@@ -467,7 +468,49 @@ function buildMessageWindowMetric(params: {
       x: index,
       y: params.kind === "cpu" ? sample.cpuUtilPct : deriveGpuUtilForSample(sample),
     })),
+    xMarkers: buildMessageStageMarkers(params.message, scopedSamples.length),
   };
+}
+
+function buildMessageStageMarkers(
+  message: LatencyMessageSummary,
+  sampleCount: number,
+): Array<{ x: number; label: string }> {
+  if (sampleCount <= 1) {
+    return [];
+  }
+  const stages: Array<{ label: string; durationMs?: number }> = [
+    { label: "T1", durationMs: message.t1FeishuInboundMs },
+    { label: "T2", durationMs: message.t2GatewayEnqueueMs },
+    { label: "T3", durationMs: message.t3WorkerQueueWaitMs },
+    { label: "T4", durationMs: message.t4AgentPreprocessMs },
+    { label: "T5", durationMs: message.t5LlmTotalMs },
+    { label: "T6", durationMs: message.t6FeishuFinalAckMs },
+  ];
+  const totalDurationMs = stages.reduce((sum, stage) => {
+    const durationMs = stage.durationMs;
+    return typeof durationMs === "number" && Number.isFinite(durationMs) && durationMs > 0
+      ? sum + durationMs
+      : sum;
+  }, 0);
+  if (totalDurationMs <= 0) {
+    return [];
+  }
+
+  let cumulativeDurationMs = 0;
+  return stages
+    .map((stage) => {
+      const durationMs = stage.durationMs;
+      if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+        return undefined;
+      }
+      cumulativeDurationMs += durationMs;
+      return {
+        label: stage.label,
+        x: ((sampleCount - 1) * cumulativeDurationMs) / totalDurationMs,
+      };
+    })
+    .filter((marker): marker is { x: number; label: string } => marker !== undefined);
 }
 
 function renderMessageUtilCharts(
@@ -938,6 +981,12 @@ function renderChartSvg(metric: ChartMetric): string {
       : []),
     { label: `min ${formatUnit(metric.unit, min)}`, y: minGuideY },
   ];
+  const xMarkers = (metric.xMarkers ?? [])
+    .map((marker) => ({
+      ...marker,
+      x: paddingLeft + ((marker.x - minX) / xSpan) * (width - paddingLeft - paddingRight),
+    }))
+    .filter((marker) => Number.isFinite(marker.x));
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">
       <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
@@ -954,6 +1003,12 @@ function renderChartSvg(metric: ChartMetric): string {
           : ""
       }
       <line x1="${paddingLeft}" y1="${maxGuideY.toFixed(1)}" x2="${width - paddingRight}" y2="${maxGuideY.toFixed(1)}" class="guide max-guide" />
+      ${xMarkers
+        .map(
+          (marker) =>
+            `<line x1="${marker.x.toFixed(1)}" y1="${paddingTop}" x2="${marker.x.toFixed(1)}" y2="${height - paddingBottom}" class="guide stage-guide" />`,
+        )
+        .join("")}
       <polyline points="${points}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">${escapeHtml(metric.title)}</text>
       <text x="${width / 2}" y="36" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`Avg: ${formatUnit(metric.unit, avg)} | Max: ${formatUnit(metric.unit, max)}`)}</text>
@@ -961,6 +1016,12 @@ function renderChartSvg(metric: ChartMetric): string {
         .map(
           (tick) =>
             `<text x="${paddingLeft - 8}" y="${(tick.y + 4).toFixed(1)}" text-anchor="end" class="axis-label">${escapeHtml(tick.label)}</text>`,
+        )
+        .join("")}
+      ${xMarkers
+        .map(
+          (marker) =>
+            `<text x="${marker.x.toFixed(1)}" y="${height - paddingBottom + 16}" text-anchor="middle" class="axis-label">${escapeHtml(marker.label)}</text>`,
         )
         .join("")}
       <text x="${width - paddingRight}" y="${paddingTop - 8}" text-anchor="end" class="axis-label">${escapeHtml(`latest ${formatUnit(metric.unit, latest)}`)}</text>
@@ -1113,6 +1174,7 @@ export function renderLatencyReportHtml(
     .guide { stroke-width: 1.8; stroke-dasharray: 6 4; }
     .avg-guide { stroke: #16a34a; }
     .max-guide { stroke: #dc2626; }
+    .stage-guide { stroke: rgba(15, 23, 42, 0.2); stroke-width: 1.2; stroke-dasharray: 3 3; }
     .axis-label { fill: #6b7280; font-size: 11px; font-family: "Helvetica Neue", Arial, sans-serif; }
     .chart-overlay-title { fill: #111827; font-size: 16px; font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; }
     .chart-overlay-subtitle { fill: #374151; font-size: 13px; font-family: "Helvetica Neue", Arial, sans-serif; }
