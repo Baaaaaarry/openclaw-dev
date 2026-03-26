@@ -493,7 +493,7 @@ function buildMessageStageMarkers(
     { label: "T5", endedAtMs: message.t5WindowEndedAtMs },
     { label: "T6", endedAtMs: message.t6WindowEndedAtMs },
   ];
-  return stages
+  const markers = stages
     .map((stage) => {
       const endedAtMs = stage.endedAtMs;
       if (
@@ -509,6 +509,33 @@ function buildMessageStageMarkers(
       };
     })
     .filter((marker): marker is { x: number; label: string } => marker !== undefined);
+  if (
+    typeof message.t4RagRecallResults === "number" &&
+    Number.isFinite(message.t4RagRecallResults) &&
+    message.t4RagRecallResults > 0
+  ) {
+    if (
+      typeof message.ragWindowStartedAtMs === "number" &&
+      Number.isFinite(message.ragWindowStartedAtMs) &&
+      message.ragWindowStartedAtMs >= overallStartedAtMs
+    ) {
+      markers.push({
+        label: "RAG.start",
+        x: message.ragWindowStartedAtMs - overallStartedAtMs,
+      });
+    }
+    if (
+      typeof message.ragWindowEndedAtMs === "number" &&
+      Number.isFinite(message.ragWindowEndedAtMs) &&
+      message.ragWindowEndedAtMs >= overallStartedAtMs
+    ) {
+      markers.push({
+        label: "RAG.end",
+        x: message.ragWindowEndedAtMs - overallStartedAtMs,
+      });
+    }
+  }
+  return markers;
 }
 
 function renderMessageUtilCharts(

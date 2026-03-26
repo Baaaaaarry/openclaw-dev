@@ -45,6 +45,8 @@ describe("latency-trace-visualize", () => {
           t3WindowEndedAtMs: 1_060,
           t4WindowStartedAtMs: 1_060,
           t4WindowEndedAtMs: 1_100,
+          ragWindowStartedAtMs: 1_070,
+          ragWindowEndedAtMs: 1_090,
           t5WindowStartedAtMs: 1_100,
           t5WindowEndedAtMs: 1_600,
           t6WindowStartedAtMs: 1_600,
@@ -186,6 +188,8 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("Utilization (%)");
     expect(html).toContain("avg 31.8%");
     expect(html).toContain(">T1<");
+    expect(html).toContain(">RAG.start<");
+    expect(html).toContain(">RAG.end<");
     expect(html).toContain(">T5<");
     expect(html).toContain(">T6<");
     expect(html).toContain("RAG vs No-RAG Comparison");
