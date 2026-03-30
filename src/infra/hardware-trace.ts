@@ -105,137 +105,213 @@ function toNumber(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-async function collectNvidiaGpuSamples(): Promise<HardwareGpuSample[] | undefined> {
+function parseValueNumber(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  return match ? toNumber(match[0]) : undefined;
+}
+
+function mergeGpuSampleLists(
+  ...lists: Array<Array<Partial<HardwareGpuSample>> | undefined>
+): HardwareGpuSample[] | undefined {
+  const merged = new Map<number, HardwareGpuSample>();
+  for (const list of lists) {
+    for (const partial of list ?? []) {
+      const index = partial.index;
+      if (typeof index !== "number" || !Number.isFinite(index)) {
+        continue;
+      }
+      const current = merged.get(index) ?? ({ index } satisfies HardwareGpuSample);
+      merged.set(index, { ...current, ...partial });
+    }
+  }
+  if (merged.size === 0) {
+    return undefined;
+  }
+  return [...merged.values()]
+    .toSorted((a, b) => (a.index ?? 0) - (b.index ?? 0))
+    .map((gpu) => finalizeGpuSample(gpu));
+}
+
+function finalizeGpuSample(sample: HardwareGpuSample): HardwareGpuSample {
+  const memoryBusWidth = sample.memoryBusWidthBits;
+  const maxMemClock = sample.maxMemClockMHz;
+  const memClock = sample.memClockMHz;
+  const memUtil = sample.utilizationMemPct;
+  const memBandwidthPeakGBps =
+    typeof maxMemClock === "number" &&
+    Number.isFinite(maxMemClock) &&
+    maxMemClock > 0 &&
+    typeof memoryBusWidth === "number" &&
+    Number.isFinite(memoryBusWidth) &&
+    memoryBusWidth > 0
+      ? (maxMemClock * (memoryBusWidth / 8) * 2) / 1000
+      : sample.memBandwidthPeakGBps;
+  const memBandwidthCurrentCapGBps =
+    typeof memClock === "number" &&
+    Number.isFinite(memClock) &&
+    memClock > 0 &&
+    typeof memoryBusWidth === "number" &&
+    Number.isFinite(memoryBusWidth) &&
+    memoryBusWidth > 0
+      ? (memClock * (memoryBusWidth / 8) * 2) / 1000
+      : undefined;
+  const memBandwidthEstimateGBps =
+    typeof memUtil === "number" &&
+    Number.isFinite(memUtil) &&
+    memUtil >= 0 &&
+    typeof memBandwidthCurrentCapGBps === "number" &&
+    Number.isFinite(memBandwidthCurrentCapGBps)
+      ? (memUtil / 100) * memBandwidthCurrentCapGBps
+      : sample.memBandwidthEstimateGBps;
+  return {
+    ...sample,
+    memBandwidthPeakGBps,
+    memBandwidthEstimateGBps,
+  };
+}
+
+async function collectNvidiaQueryCsv(fields: string[]): Promise<string[][] | undefined> {
   try {
     const { stdout } = await execFileAsync(
       "nvidia-smi",
-      [
-        "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem,clocks.max.mem,memory.bus_width,pcie.link.gen.current,pcie.link.width.current,temperature.gpu",
-        "--format=csv,noheader,nounits",
-      ],
+      [`--query-gpu=${fields.join(",")}`, "--format=csv,noheader,nounits"],
       { timeout: 800, maxBuffer: 1024 * 1024 },
     );
     const rows = stdout
       .trim()
       .split("\n")
       .map((line) => line.trim())
-      .filter(Boolean);
-    if (rows.length === 0) {
+      .filter(Boolean)
+      .map((row) => row.split(",").map((value) => value.trim()));
+    return rows.length > 0 ? rows : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function collectNvidiaGpuBaseSamples(): Promise<Partial<HardwareGpuSample>[] | undefined> {
+  const rows = await collectNvidiaQueryCsv([
+    "index",
+    "name",
+    "utilization.gpu",
+    "power.draw",
+    "clocks.sm",
+    "temperature.gpu",
+  ]);
+  return rows?.map(([index, name, utilizationGpuPct, powerDrawW, smClockMHz, temperatureC]) => ({
+    index: toNumber(index),
+    name,
+    utilizationGpuPct: toNumber(utilizationGpuPct),
+    powerDrawW: toNumber(powerDrawW),
+    smClockMHz: toNumber(smClockMHz),
+    temperatureC: toNumber(temperatureC),
+  }));
+}
+
+async function collectNvidiaGpuMemorySamples(): Promise<Partial<HardwareGpuSample>[] | undefined> {
+  const rows = await collectNvidiaQueryCsv([
+    "index",
+    "utilization.memory",
+    "memory.used",
+    "memory.total",
+    "clocks.mem",
+  ]);
+  return rows?.map(([index, utilizationMemPct, memoryUsedMiB, memoryTotalMiB, memClockMHz]) => ({
+    index: toNumber(index),
+    utilizationMemPct: toNumber(utilizationMemPct),
+    memoryUsedMiB: toNumber(memoryUsedMiB),
+    memoryTotalMiB: toNumber(memoryTotalMiB),
+    memClockMHz: toNumber(memClockMHz),
+  }));
+}
+
+async function collectNvidiaGpuMetadataSamples(): Promise<
+  Partial<HardwareGpuSample>[] | undefined
+> {
+  const rows = await collectNvidiaQueryCsv([
+    "index",
+    "clocks.max.mem",
+    "memory.bus_width",
+    "pcie.link.gen.current",
+    "pcie.link.width.current",
+  ]);
+  return rows?.map(
+    ([index, maxMemClockMHz, memoryBusWidthBits, pcieLinkGenCurrent, pcieLinkWidthCurrent]) => ({
+      index: toNumber(index),
+      maxMemClockMHz: toNumber(maxMemClockMHz),
+      memoryBusWidthBits: toNumber(memoryBusWidthBits),
+      pcieLinkGenCurrent: toNumber(pcieLinkGenCurrent),
+      pcieLinkWidthCurrent: toNumber(pcieLinkWidthCurrent),
+    }),
+  );
+}
+
+function extractXmlTag(section: string, tag: string): string | undefined {
+  const match = section.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, "i"));
+  return match?.[1]?.trim();
+}
+
+function extractXmlSection(section: string, tag: string): string | undefined {
+  return extractXmlTag(section, tag);
+}
+
+async function collectNvidiaGpuXmlSamples(): Promise<Partial<HardwareGpuSample>[] | undefined> {
+  try {
+    const { stdout } = await execFileAsync("nvidia-smi", ["-q", "-x"], {
+      timeout: 1200,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const sections = [...stdout.matchAll(/<gpu(?:\s+id="[^"]*")?>([\s\S]*?)<\/gpu>/gi)].map(
+      (match) => match[1],
+    );
+    if (sections.length === 0) {
       return undefined;
     }
-    return rows.map((row) => {
-      const [
-        index,
-        name,
-        utilizationGpuPct,
-        utilizationMemPct,
-        memoryUsedMiB,
-        memoryTotalMiB,
-        powerDrawW,
-        smClockMHz,
-        memClockMHz,
-        maxMemClockMHz,
-        memoryBusWidthBits,
-        pcieLinkGenCurrent,
-        pcieLinkWidthCurrent,
-        temperatureC,
-      ] = row.split(",").map((value) => value.trim());
-      const utilizationMem = toNumber(utilizationMemPct);
-      const memClock = toNumber(memClockMHz);
-      const maxMemClock = toNumber(maxMemClockMHz);
-      const memoryBusWidth = toNumber(memoryBusWidthBits);
-      const memBandwidthPeakGBps =
-        typeof maxMemClock === "number" &&
-        Number.isFinite(maxMemClock) &&
-        maxMemClock > 0 &&
-        typeof memoryBusWidth === "number" &&
-        Number.isFinite(memoryBusWidth) &&
-        memoryBusWidth > 0
-          ? (maxMemClock * (memoryBusWidth / 8) * 2) / 1000
-          : undefined;
-      const memBandwidthCurrentCapGBps =
-        typeof memClock === "number" &&
-        Number.isFinite(memClock) &&
-        memClock > 0 &&
-        typeof memoryBusWidth === "number" &&
-        Number.isFinite(memoryBusWidth) &&
-        memoryBusWidth > 0
-          ? (memClock * (memoryBusWidth / 8) * 2) / 1000
-          : undefined;
+    return sections.map((section, index) => {
+      const utilizationSection = extractXmlSection(section, "utilization") ?? section;
+      const fbMemorySection = extractXmlSection(section, "fb_memory_usage") ?? section;
+      const clocksSection = extractXmlSection(section, "clocks") ?? section;
+      const maxClocksSection = extractXmlSection(section, "max_clocks") ?? section;
+      const pciSection = extractXmlSection(section, "pci") ?? section;
+      const tempSection = extractXmlSection(section, "temperature") ?? section;
       return {
-        index: toNumber(index),
-        name,
-        utilizationGpuPct: toNumber(utilizationGpuPct),
-        utilizationMemPct: utilizationMem,
-        memoryUsedMiB: toNumber(memoryUsedMiB),
-        memoryTotalMiB: toNumber(memoryTotalMiB),
-        powerDrawW: toNumber(powerDrawW),
-        smClockMHz: toNumber(smClockMHz),
-        memClockMHz: memClock,
-        maxMemClockMHz: maxMemClock,
-        memoryBusWidthBits: memoryBusWidth,
-        memBandwidthPeakGBps,
-        memBandwidthEstimateGBps:
-          typeof utilizationMem === "number" &&
-          Number.isFinite(utilizationMem) &&
-          utilizationMem >= 0 &&
-          typeof memBandwidthCurrentCapGBps === "number" &&
-          Number.isFinite(memBandwidthCurrentCapGBps)
-            ? (utilizationMem / 100) * memBandwidthCurrentCapGBps
-            : undefined,
-        pcieLinkGenCurrent: toNumber(pcieLinkGenCurrent),
-        pcieLinkWidthCurrent: toNumber(pcieLinkWidthCurrent),
-        temperatureC: toNumber(temperatureC),
-      } satisfies HardwareGpuSample;
+        index,
+        name: extractXmlTag(section, "product_name"),
+        utilizationGpuPct: parseValueNumber(extractXmlTag(utilizationSection, "gpu_util")),
+        utilizationMemPct: parseValueNumber(extractXmlTag(utilizationSection, "memory_util")),
+        memoryUsedMiB: parseValueNumber(extractXmlTag(fbMemorySection, "used")),
+        memoryTotalMiB: parseValueNumber(extractXmlTag(fbMemorySection, "total")),
+        powerDrawW: parseValueNumber(extractXmlTag(section, "power_draw")),
+        smClockMHz: parseValueNumber(extractXmlTag(clocksSection, "sm_clock")),
+        memClockMHz: parseValueNumber(extractXmlTag(clocksSection, "mem_clock")),
+        maxMemClockMHz:
+          parseValueNumber(extractXmlTag(maxClocksSection, "mem_clock")) ??
+          parseValueNumber(extractXmlTag(section, "max_mem_clock")),
+        memoryBusWidthBits: parseValueNumber(extractXmlTag(section, "memory_bus_width")),
+        pcieLinkGenCurrent:
+          parseValueNumber(extractXmlTag(pciSection, "current_link_gen")) ??
+          parseValueNumber(extractXmlTag(pciSection, "link_gen")),
+        pcieLinkWidthCurrent:
+          parseValueNumber(extractXmlTag(pciSection, "current_link_width")) ??
+          parseValueNumber(extractXmlTag(pciSection, "link_width")),
+        temperatureC: parseValueNumber(extractXmlTag(tempSection, "gpu_temp")),
+      } satisfies Partial<HardwareGpuSample>;
     });
   } catch {
-    try {
-      const { stdout } = await execFileAsync(
-        "nvidia-smi",
-        [
-          "--query-gpu=index,name,utilization.gpu,utilization.memory,memory.used,memory.total,power.draw,clocks.sm,clocks.mem,temperature.gpu",
-          "--format=csv,noheader,nounits",
-        ],
-        { timeout: 800, maxBuffer: 1024 * 1024 },
-      );
-      const rows = stdout
-        .trim()
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean);
-      if (rows.length === 0) {
-        return undefined;
-      }
-      return rows.map((row) => {
-        const [
-          index,
-          name,
-          utilizationGpuPct,
-          utilizationMemPct,
-          memoryUsedMiB,
-          memoryTotalMiB,
-          powerDrawW,
-          smClockMHz,
-          memClockMHz,
-          temperatureC,
-        ] = row.split(",").map((value) => value.trim());
-        return {
-          index: toNumber(index),
-          name,
-          utilizationGpuPct: toNumber(utilizationGpuPct),
-          utilizationMemPct: toNumber(utilizationMemPct),
-          memoryUsedMiB: toNumber(memoryUsedMiB),
-          memoryTotalMiB: toNumber(memoryTotalMiB),
-          powerDrawW: toNumber(powerDrawW),
-          smClockMHz: toNumber(smClockMHz),
-          memClockMHz: toNumber(memClockMHz),
-          temperatureC: toNumber(temperatureC),
-        } satisfies HardwareGpuSample;
-      });
-    } catch {
-      return undefined;
-    }
+    return undefined;
   }
+}
+
+async function collectNvidiaGpuSamples(): Promise<HardwareGpuSample[] | undefined> {
+  return mergeGpuSampleLists(
+    await collectNvidiaGpuBaseSamples(),
+    await collectNvidiaGpuMemorySamples(),
+    await collectNvidiaGpuMetadataSamples(),
+    await collectNvidiaGpuXmlSamples(),
+  );
 }
 
 async function collectHardwareSample(state: HardwareTraceState): Promise<HardwareTraceSample> {
