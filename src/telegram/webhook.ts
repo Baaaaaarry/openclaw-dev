@@ -3,12 +3,7 @@ import { webhookCallback } from "grammy";
 import type { OpenClawConfig } from "../config/config.js";
 import { isDiagnosticsEnabled } from "../infra/diagnostic-events.js";
 import { formatErrorMessage } from "../infra/errors.js";
-import { isHardwareTraceEnabled, startHardwareTrace } from "../infra/hardware-trace.js";
 import { readJsonBodyWithLimit } from "../infra/http-body.js";
-import {
-  isLatencyTracePersistEnabled,
-  startLatencyTracePersist,
-} from "../infra/latency-trace-persist.js";
 import {
   logWebhookError,
   logWebhookProcessed,
@@ -126,12 +121,6 @@ export async function startTelegramWebhook(opts: {
 
   if (diagnosticsEnabled) {
     startDiagnosticHeartbeat();
-  }
-  if (diagnosticsEnabled || isLatencyTracePersistEnabled(opts.config)) {
-    startLatencyTracePersist(opts.config);
-  }
-  if (diagnosticsEnabled || isHardwareTraceEnabled(opts.config)) {
-    startHardwareTrace(opts.config);
   }
 
   const server = createServer((req, res) => {
