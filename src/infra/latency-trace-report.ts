@@ -288,6 +288,33 @@ function recalculateDerived(summary: LatencyMessageSummary): void {
       (sum, value) => sum + value,
       0,
     );
+  } else {
+    const cliFirstVisibleParts = [
+      summary.t1FeishuInboundMs,
+      summary.t2GatewayEnqueueMs,
+      summary.t3WorkerQueueWaitMs,
+      summary.t4AgentPreprocessMs,
+      summary.t5LlmTtftMs,
+    ];
+    if (
+      cliFirstVisibleParts.every((value) => typeof value === "number" && Number.isFinite(value))
+    ) {
+      summary.localFirstVisibleMs = (cliFirstVisibleParts as number[]).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+    } else if (
+      typeof summary.overallWindowStartedAtMs === "number" &&
+      Number.isFinite(summary.overallWindowStartedAtMs) &&
+      typeof summary.t5WindowStartedAtMs === "number" &&
+      Number.isFinite(summary.t5WindowStartedAtMs) &&
+      typeof summary.t5LlmTtftMs === "number" &&
+      Number.isFinite(summary.t5LlmTtftMs)
+    ) {
+      summary.localFirstVisibleMs =
+        Math.max(0, summary.t5WindowStartedAtMs - summary.overallWindowStartedAtMs) +
+        summary.t5LlmTtftMs;
+    }
   }
 
   const completeParts = [
@@ -300,6 +327,28 @@ function recalculateDerived(summary: LatencyMessageSummary): void {
   ];
   if (completeParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
     summary.localCompleteMs = (completeParts as number[]).reduce((sum, value) => sum + value, 0);
+  } else {
+    const cliCompleteParts = [
+      summary.t1FeishuInboundMs,
+      summary.t2GatewayEnqueueMs,
+      summary.t3WorkerQueueWaitMs,
+      summary.t4AgentPreprocessMs,
+      summary.t5LlmTotalMs,
+    ];
+    if (cliCompleteParts.every((value) => typeof value === "number" && Number.isFinite(value))) {
+      summary.localCompleteMs = (cliCompleteParts as number[]).reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+    } else if (
+      typeof summary.overallWindowStartedAtMs === "number" &&
+      Number.isFinite(summary.overallWindowStartedAtMs) &&
+      typeof summary.overallWindowEndedAtMs === "number" &&
+      Number.isFinite(summary.overallWindowEndedAtMs) &&
+      summary.overallWindowEndedAtMs >= summary.overallWindowStartedAtMs
+    ) {
+      summary.localCompleteMs = summary.overallWindowEndedAtMs - summary.overallWindowStartedAtMs;
+    }
   }
 
   summary.t5PrefillTokensPerSec = calculateRate(summary.t5InputTokens, summary.t5LlmPrefillMs);

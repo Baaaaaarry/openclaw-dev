@@ -140,6 +140,80 @@ describe("latency-trace-report", () => {
     expect(report.series.t5_llm_total_ms?.avg).toBe(420);
   });
 
+  it("computes CLI-compatible E2E values when T6 is missing", () => {
+    const records = parseLatencyTraceJsonl(
+      [
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t1_feishu_inbound",
+          durationMs: 10,
+          startedAtMs: 1_000,
+          endedAtMs: 1_010,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t2_gateway_enqueue",
+          durationMs: 5,
+          startedAtMs: 1_010,
+          endedAtMs: 1_015,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t3_worker_queue_wait",
+          durationMs: 6,
+          startedAtMs: 1_015,
+          endedAtMs: 1_021,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t4_agent_preprocess",
+          durationMs: 7,
+          startedAtMs: 1_021,
+          endedAtMs: 1_028,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t5_llm_inference",
+          stage: "ttft",
+          durationMs: 80,
+          startedAtMs: 1_028,
+          endedAtMs: 1_108,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+        JSON.stringify({
+          type: "latency.segment",
+          segment: "t5_llm_inference",
+          stage: "completed",
+          durationMs: 300,
+          totalMs: 300,
+          startedAtMs: 1_028,
+          endedAtMs: 1_328,
+          channel: "cli",
+          accountId: "main",
+          messageId: "msg_cli_1",
+        }),
+      ].join("\n"),
+    );
+
+    const report = summarizeLatencyRecords(records);
+    expect(report.messages[0]?.localFirstVisibleMs).toBe(10 + 5 + 6 + 7 + 80);
+    expect(report.messages[0]?.localCompleteMs).toBe(10 + 5 + 6 + 7 + 300);
+  });
+
   it("formats a readable report", () => {
     const report = summarizeLatencyRecords(
       parseLatencyTraceJsonl(
