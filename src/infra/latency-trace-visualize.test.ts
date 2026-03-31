@@ -278,4 +278,32 @@ describe("latency-trace-visualize", () => {
     const html = renderLatencyReportHtml({ report, avgMode: true });
     expect(html).toContain("Aggregate Summary");
   });
+
+  it("renders a stage bar even when E2E values are unavailable", () => {
+    const report: LatencyAggregateReport = {
+      recordsScanned: 1,
+      messages: [
+        {
+          key: "feishu|agent|msg2",
+          accountId: "agent",
+          messageId: "msg2",
+          t4AgentPreprocessMs: 30,
+          t5LlmTotalMs: 400,
+          t5LlmLoadMs: 40,
+          t5LlmPrefillMs: 120,
+          t5LlmDecodeMs: 220,
+          t6FeishuFinalAckMs: 50,
+        },
+      ],
+      series: {},
+      comparisons: {
+        ragVsNoRag: {
+          rag: { count: 0 },
+          noRag: { count: 1 },
+        },
+      },
+    };
+    const html = renderLatencyReportHtml({ report });
+    expect(html).not.toContain('<div class="segment empty"></div>');
+  });
 });

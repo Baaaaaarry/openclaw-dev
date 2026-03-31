@@ -171,12 +171,34 @@ function buildCompleteStageBars(message: LatencyMessageSummary): StageBar[] {
   ];
 }
 
+function resolveTimelineTotal(message: LatencyMessageSummary): number | undefined {
+  if (
+    typeof message.localCompleteMs === "number" &&
+    Number.isFinite(message.localCompleteMs) &&
+    message.localCompleteMs > 0
+  ) {
+    return message.localCompleteMs;
+  }
+  const fallback = buildCompleteStageBars(message)
+    .map((segment) => segment.value)
+    .filter(
+      (value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0,
+    )
+    .reduce((sum, value) => sum + value, 0);
+  return fallback > 0 ? fallback : undefined;
+}
+
 function renderStageBar(message: LatencyMessageSummary): string {
-  const total = message.localCompleteMs;
+  const total = resolveTimelineTotal(message);
   const segments = buildCompleteStageBars(message)
     .filter(
       (segment) =>
-        typeof segment.value === "number" && Number.isFinite(segment.value) && segment.value > 0,
+        typeof segment.value === "number" &&
+        Number.isFinite(segment.value) &&
+        segment.value > 0 &&
+        typeof total === "number" &&
+        Number.isFinite(total) &&
+        total > 0,
     )
     .map((segment) => {
       const width = ratioPercent(segment.value, total);
@@ -1373,7 +1395,21 @@ export function renderLatencyReportHtml(
     };
 
     function buildMessageTimelineSvg(message) {
-      const total = Number.isFinite(message.localCompleteMs) && message.localCompleteMs > 0 ? message.localCompleteMs : 1;
+      const total = Number.isFinite(message.localCompleteMs) && message.localCompleteMs > 0
+        ? message.localCompleteMs
+        : [
+            message.t1FeishuInboundMs,
+            message.t2GatewayEnqueueMs,
+            message.t3WorkerQueueWaitMs,
+            message.t4AgentPreprocessMs,
+            message.t5LlmLoadMs,
+            message.t5LlmPrefillMs,
+            message.t5LlmDecodeMs,
+            Number.isFinite(message.t5LlmTotalMs)
+              ? Math.max(0, message.t5LlmTotalMs - (message.t5LlmLoadMs || 0) - (message.t5LlmPrefillMs || 0) - (message.t5LlmDecodeMs || 0))
+              : 0,
+            message.t6FeishuFinalAckMs,
+          ].filter((value) => Number.isFinite(value) && value > 0).reduce((sum, value) => sum + value, 0) || 1;
       const residual = Number.isFinite(message.t5LlmTotalMs)
         ? Math.max(0, message.t5LlmTotalMs - (message.t5LlmLoadMs || 0) - (message.t5LlmPrefillMs || 0) - (message.t5LlmDecodeMs || 0))
         : 0;
