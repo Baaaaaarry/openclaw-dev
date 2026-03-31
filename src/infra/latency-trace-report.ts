@@ -827,9 +827,7 @@ function summarizeHardwareWindow(
   ) {
     return undefined;
   }
-  const windowSamples = samples.filter(
-    (sample) => sample.epochMs >= startedAtMs && sample.epochMs <= endedAtMs,
-  );
+  const windowSamples = collectWindowSamples(samples, [{ startedAtMs, endedAtMs }]);
   return summarizeHardwareSamples(windowSamples);
 }
 
@@ -851,12 +849,62 @@ function summarizeHardwareWindows(
   if (validWindows.length === 0) {
     return undefined;
   }
-  const windowSamples = samples.filter((sample) =>
-    validWindows.some(
+  const windowSamples = collectWindowSamples(samples, validWindows);
+  return summarizeHardwareSamples(windowSamples);
+}
+
+function collectWindowSamples(
+  samples: HardwareTraceSample[],
+  windows: TimeWindow[],
+): HardwareTraceSample[] {
+  if (samples.length === 0 || windows.length === 0) {
+    return [];
+  }
+  const exactMatches = samples.filter((sample) =>
+    windows.some(
       (window) => sample.epochMs >= window.startedAtMs && sample.epochMs <= window.endedAtMs,
     ),
   );
-  return summarizeHardwareSamples(windowSamples);
+  if (exactMatches.length > 0) {
+    return exactMatches;
+  }
+  const estimatedIntervalMs = estimateSampleIntervalMs(samples);
+  const toleranceMs = estimatedIntervalMs;
+  const selected = new Map<number, HardwareTraceSample>();
+  for (const window of windows) {
+    const midpoint = (window.startedAtMs + window.endedAtMs) / 2;
+    let nearest: HardwareTraceSample | undefined;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const sample of samples) {
+      const distance = Math.abs(sample.epochMs - midpoint);
+      if (distance < nearestDistance) {
+        nearest = sample;
+        nearestDistance = distance;
+      }
+    }
+    if (nearest && nearestDistance <= toleranceMs) {
+      selected.set(nearest.epochMs, nearest);
+    }
+  }
+  return [...selected.values()].toSorted((a, b) => a.epochMs - b.epochMs);
+}
+
+function estimateSampleIntervalMs(samples: HardwareTraceSample[]): number {
+  if (samples.length <= 1) {
+    return 1000;
+  }
+  const deltas: number[] = [];
+  for (let i = 1; i < samples.length; i += 1) {
+    const delta = samples[i].epochMs - samples[i - 1].epochMs;
+    if (Number.isFinite(delta) && delta > 0) {
+      deltas.push(delta);
+    }
+  }
+  if (deltas.length === 0) {
+    return 1000;
+  }
+  deltas.sort((a, b) => a - b);
+  return deltas[Math.floor(deltas.length / 2)] ?? 1000;
 }
 
 function summarizeHardwareSamples(

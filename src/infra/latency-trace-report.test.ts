@@ -338,6 +338,63 @@ describe("latency-trace-report", () => {
     expect(report.messages[0]?.hardwareT5Decode?.gpuUtilAvgPct).toBe(91);
   });
 
+  it("falls back to the nearest hardware sample for short T5 windows", () => {
+    const report = summarizeLatencyRecords(
+      parseLatencyTraceJsonl(
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "native",
+            durationMs: 120,
+            totalMs: 120,
+            loadMs: 20,
+            promptEvalMs: 40,
+            evalMs: 60,
+            startedAtMs: 1_000,
+            endedAtMs: 1_120,
+            channel: "feishu",
+            accountId: "main",
+            messageId: "om_msg_short",
+          }),
+        ].join("\n"),
+      ),
+      [
+        {
+          ts: "2026-01-01T00:00:01.000Z",
+          epochMs: 1_000,
+          cpuUtilPct: 22,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 50,
+          memUsedBytes: 50,
+          memUtilPct: 50,
+          gpus: [{ index: 0, utilizationGpuPct: 12, powerDrawW: 25 }],
+        },
+        {
+          ts: "2026-01-01T00:00:02.000Z",
+          epochMs: 2_000,
+          cpuUtilPct: 44,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 40,
+          memUsedBytes: 60,
+          memUtilPct: 60,
+          gpus: [{ index: 0, utilizationGpuPct: 88, powerDrawW: 120 }],
+        },
+      ],
+    );
+
+    expect(report.messages[0]?.hardwareT5Load?.sampleCount).toBe(1);
+    expect(report.messages[0]?.hardwareT5Load?.cpuUtilAvgPct).toBe(22);
+    expect(report.messages[0]?.hardwareT5Prefill?.sampleCount).toBe(1);
+    expect(report.messages[0]?.hardwareT5Decode?.sampleCount).toBe(1);
+  });
+
   it("falls back to utilization.memory when gpu memory totals are unavailable", () => {
     const report = summarizeLatencyRecords(
       parseLatencyTraceJsonl(

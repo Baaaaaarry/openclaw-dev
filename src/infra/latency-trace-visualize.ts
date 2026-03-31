@@ -604,7 +604,6 @@ function renderMessageCards(
     .map((message, index) => {
       const rows = [
         ["Message", String(message.messageId ?? "N/A")],
-        ["Run", String(message.runId ?? "N/A")],
         ["T4 RAG Recall", formatMs(message.t4RagRecallMs)],
         ["RAG Hits", formatCount(message.t4RagRecallResults)],
         ["Calls", formatCount(message.t5LlmCallCount)],
