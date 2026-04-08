@@ -494,7 +494,7 @@ export function createOllamaStreamFn(
           if (firstChunkAt === undefined) {
             firstChunkAt = Date.now();
             logLatencySegment({
-              segment: "t5_llm_inference",
+              segment: "t5_llm_inference", // Trace T5: LLM
               stage: "ttft",
               durationMs: firstChunkAt - requestStartedAt,
               startedAtMs: requestStartedAt,

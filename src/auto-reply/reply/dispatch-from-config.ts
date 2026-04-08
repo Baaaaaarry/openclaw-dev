@@ -147,7 +147,7 @@ export async function dispatchReplyFromConfig(params: {
       now >= latencyStartedAtMs
     ) {
       logLatencySegment({
-        segment: "t2_gateway_enqueue",
+        segment: "t2_gateway_enqueue", // Trace: T2 Gateway
         durationMs: now - latencyStartedAtMs,
         startedAtMs: latencyStartedAtMs,
         endedAtMs: now,

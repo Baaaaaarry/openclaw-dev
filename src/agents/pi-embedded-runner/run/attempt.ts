@@ -819,7 +819,7 @@ export async function runEmbeddedAttempt(
     });
     if (autoMemoryRecall) {
       logLatencySegment({
-        segment: "t4_agent_preprocess",
+        segment: "t4_agent_preprocess", // Trace T4 : RAG Hit
         stage: "rag_recall",
         durationMs: autoMemoryRecall.durationMs,
         startedAtMs: autoMemoryRecall.startedAtMs,
@@ -1559,7 +1559,7 @@ export async function runEmbeddedAttempt(
               : attemptStartedAt;
           if (promptDispatchAt >= preprocessStartedAt) {
             logLatencySegment({
-              segment: "t4_agent_preprocess",
+              segment: "t4_agent_preprocess", // Trace T4: Agent preprocess
               durationMs: promptDispatchAt - preprocessStartedAt,
               startedAtMs: preprocessStartedAt,
               endedAtMs: promptDispatchAt,

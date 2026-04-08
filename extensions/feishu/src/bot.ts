@@ -769,7 +769,7 @@ export async function handleFeishuMessage(params: {
     pluginReadyAtMs >= latencyTrace.feishuEventReceivedAtMs
   ) {
     logLatencySegment({
-      segment: "t1_feishu_inbound",
+      segment: "t1_feishu_inbound", // Trace: T1 Feishu In
       durationMs: pluginReadyAtMs - latencyTrace.feishuEventReceivedAtMs,
       startedAtMs: latencyTrace.feishuEventReceivedAtMs,
       endedAtMs: pluginReadyAtMs,

@@ -219,7 +219,7 @@ export async function runEmbeddedPiAgent(
         started >= trace.gatewayQueuedAtMs
       ) {
         logLatencySegment({
-          segment: "t3_worker_queue_wait",
+          segment: "t3_worker_queue_wait", // Trace T3: worker
           durationMs: started - trace.gatewayQueuedAtMs,
           startedAtMs: trace.gatewayQueuedAtMs,
           endedAtMs: started,

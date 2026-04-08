@@ -81,7 +81,7 @@ export function createFeishuReplyDispatcher(params: CreateFeishuReplyDispatcherP
       return;
     }
     logLatencySegment({
-      segment: "t6_feishu_return",
+      segment: "t6_feishu_return", // Trace T6: reply
       stage,
       durationMs: endedAtMs - startedAtMs,
       startedAtMs,
