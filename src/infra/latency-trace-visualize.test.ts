@@ -270,12 +270,16 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("OpenClaw Latency Dashboard");
     expect(html).toContain("Scenario Timeline");
+    expect(html).toContain("Scenario Message Gantt");
     expect(html).toContain("Scenario Message Concurrency");
     expect(html).toContain("Scenario LLM Concurrency");
     expect(html).toContain("Scenario CPU Utilization");
     expect(html).toContain("Scenario GPU Utilization");
     expect(html).toContain("Scenario Stage Activity");
     expect(html).toContain("Per-message Timeline");
+    expect(html).toContain("Stage Hardware Matrix");
+    expect(html).toContain("T5.total");
+    expect(html).toContain("Download scenario gantt SVG");
     expect(html).toContain("msg1");
     expect(html).toContain("CPU Utilization (T1-T6 Interval)");
     expect(html).toContain("GPU Utilization (T1-T6 Interval)");

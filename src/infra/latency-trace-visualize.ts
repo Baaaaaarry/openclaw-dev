@@ -27,6 +27,13 @@ type ChartMetric = {
   xAxisLabel?: string;
 };
 
+type GanttSegment = {
+  label: string;
+  startedAtMs: number;
+  endedAtMs: number;
+  color: string;
+};
+
 type MetricSummary = {
   avg?: number;
   max?: number;
@@ -243,6 +250,37 @@ function renderPerMessageButtons(index: number): string {
       <button class="dl-btn" data-download="message-json" data-message-index="${index}">Download message JSON</button>
       <button class="dl-btn" data-download="message-csv" data-message-index="${index}">Download message CSV</button>
     </div>`;
+}
+
+function buildMessageGanttSegments(message: LatencyMessageSummary): GanttSegment[] {
+  const segments: GanttSegment[] = [];
+  const pushWindow = (label: string, color: string, startedAtMs?: number, endedAtMs?: number) => {
+    if (
+      typeof startedAtMs === "number" &&
+      Number.isFinite(startedAtMs) &&
+      typeof endedAtMs === "number" &&
+      Number.isFinite(endedAtMs) &&
+      endedAtMs > startedAtMs
+    ) {
+      segments.push({ label, color, startedAtMs, endedAtMs });
+    }
+  };
+  pushWindow("T1", "#0f766e", message.t1WindowStartedAtMs, message.t1WindowEndedAtMs);
+  pushWindow("T2", "#0ea5e9", message.t2WindowStartedAtMs, message.t2WindowEndedAtMs);
+  pushWindow("T3", "#8b5cf6", message.t3WindowStartedAtMs, message.t3WindowEndedAtMs);
+  pushWindow("T4", "#d97706", message.t4WindowStartedAtMs, message.t4WindowEndedAtMs);
+  pushWindow("T5", "#475569", message.t5WindowStartedAtMs, message.t5WindowEndedAtMs);
+  for (const window of message.t5LoadWindows ?? []) {
+    pushWindow("Load", "#ef4444", window.startedAtMs, window.endedAtMs);
+  }
+  for (const window of message.t5PrefillWindows ?? []) {
+    pushWindow("Prefill", "#f59e0b", window.startedAtMs, window.endedAtMs);
+  }
+  for (const window of message.t5DecodeWindows ?? []) {
+    pushWindow("Decode", "#22c55e", window.startedAtMs, window.endedAtMs);
+  }
+  pushWindow("T6", "#ec4899", message.t6WindowStartedAtMs, message.t6WindowEndedAtMs);
+  return segments;
 }
 
 function buildMessageCsv(messages: LatencyMessageSummary[]): string {
@@ -728,6 +766,70 @@ function renderMessageUtilCharts(
     </div>`;
 }
 
+function renderMessageStageHardwareMatrix(message: LatencyMessageSummary): string {
+  const rows: Array<{
+    label: string;
+    duration?: number;
+    summary?: HardwareWindowSummary;
+  }> = [
+    { label: "T1", duration: message.t1FeishuInboundMs, summary: message.hardwareT1 },
+    { label: "T2", duration: message.t2GatewayEnqueueMs, summary: message.hardwareT2 },
+    { label: "T3", duration: message.t3WorkerQueueWaitMs, summary: message.hardwareT3 },
+    { label: "T4", duration: message.t4AgentPreprocessMs, summary: message.hardwareT4 },
+    { label: "T4.rag", duration: message.t4RagRecallMs, summary: message.hardwareRag },
+    { label: "T5.total", duration: message.t5LlmTotalMs, summary: message.hardwareLlm },
+    { label: "T5.load", duration: message.t5LlmLoadMs, summary: message.hardwareT5Load },
+    { label: "T5.prefill", duration: message.t5LlmPrefillMs, summary: message.hardwareT5Prefill },
+    { label: "T5.decode", duration: message.t5LlmDecodeMs, summary: message.hardwareT5Decode },
+    { label: "T6", duration: message.t6FeishuFinalAckMs, summary: message.hardwareT6 },
+  ].filter(
+    (row) =>
+      (typeof row.duration === "number" && Number.isFinite(row.duration) && row.duration > 0) ||
+      row.summary?.sampleCount,
+  );
+  if (rows.length === 0) {
+    return "";
+  }
+  return `
+    <section class="panel" style="margin-top:16px">
+      <h3>Stage Hardware Matrix</h3>
+      <p class="section-note">Each row aligns one message stage to its observed CPU/GPU window. Values are whole-machine sampled load within that stage window, not per-process attribution.</p>
+      <table class="series-table">
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th>Duration</th>
+            <th>CPU Avg</th>
+            <th>CPU Max</th>
+            <th>GPU Avg</th>
+            <th>GPU Max</th>
+            <th>GPU Power Avg</th>
+            <th>GPU Power Max</th>
+            <th>Placement</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows
+            .map(
+              (row) => `
+                <tr>
+                  <td>${escapeHtml(row.label)}</td>
+                  <td>${escapeHtml(formatMs(row.duration))}</td>
+                  <td>${escapeHtml(formatPct(row.summary?.cpuUtilAvgPct))}</td>
+                  <td>${escapeHtml(formatPct(row.summary?.cpuUtilMaxPct))}</td>
+                  <td>${escapeHtml(formatPct(row.summary?.gpuUtilAvgPct))}</td>
+                  <td>${escapeHtml(formatPct(row.summary?.gpuUtilMaxPct))}</td>
+                  <td>${escapeHtml(formatWatts(row.summary?.gpuPowerAvgW))}</td>
+                  <td>${escapeHtml(formatWatts(row.summary?.gpuPowerMaxW))}</td>
+                  <td>${escapeHtml(row.summary?.computePlacement ?? "N/A")}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </section>`;
+}
+
 function renderScenarioSection(
   report: LatencyAggregateReport,
   hardwareSamples: HardwareTraceSample[],
@@ -838,6 +940,80 @@ function renderScenarioSection(
     </section>`;
 }
 
+function renderScenarioMessageGantt(report: LatencyAggregateReport): string {
+  const scenario = report.scenario;
+  if (
+    !scenario ||
+    typeof scenario.startedAtMs !== "number" ||
+    !Number.isFinite(scenario.startedAtMs) ||
+    typeof scenario.endedAtMs !== "number" ||
+    !Number.isFinite(scenario.endedAtMs) ||
+    scenario.endedAtMs <= scenario.startedAtMs
+  ) {
+    return "";
+  }
+  const width = 1160;
+  const laneHeight = 32;
+  const laneGap = 14;
+  const paddingLeft = 190;
+  const paddingRight = 28;
+  const paddingTop = 24;
+  const paddingBottom = 34;
+  const timelineWidth = width - paddingLeft - paddingRight;
+  const totalMs = scenario.endedAtMs - scenario.startedAtMs;
+  const height =
+    paddingTop +
+    paddingBottom +
+    report.messages.length * laneHeight +
+    Math.max(0, report.messages.length - 1) * laneGap;
+  const scaleX = (ts: number) =>
+    paddingLeft + ((ts - scenario.startedAtMs) / totalMs) * timelineWidth;
+  const ticks = 6;
+  const gridLines = Array.from({ length: ticks + 1 }, (_, index) => {
+    const ratio = index / ticks;
+    const x = paddingLeft + ratio * timelineWidth;
+    return { x, label: `${Math.round(ratio * totalMs)} ms` };
+  });
+  const rows = report.messages
+    .map((message, index) => {
+      const y = paddingTop + index * (laneHeight + laneGap);
+      const label = String(message.messageId ?? message.key);
+      const segments = buildMessageGanttSegments(message)
+        .map((segment) => {
+          const x = scaleX(segment.startedAtMs);
+          const widthPx = Math.max(2, scaleX(segment.endedAtMs) - x);
+          return `<rect x="${x.toFixed(1)}" y="${y}" width="${widthPx.toFixed(1)}" height="${laneHeight}" rx="6" ry="6" fill="${segment.color}" opacity="${segment.label === "T5" ? "0.20" : "0.95"}"><title>${escapeHtml(`${label} ${segment.label}: ${segment.endedAtMs - segment.startedAtMs} ms`)}</title></rect>`;
+        })
+        .join("");
+      return `
+        <text x="${paddingLeft - 12}" y="${y + laneHeight / 2 + 5}" text-anchor="end" class="axis-label">${escapeHtml(label)}</text>
+        <rect x="${paddingLeft}" y="${y}" width="${timelineWidth}" height="${laneHeight}" rx="6" ry="6" fill="rgba(148,163,184,0.06)" />
+        ${segments}`;
+    })
+    .join("");
+
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Scenario Message Gantt</h2>
+      <p class="section-note">Each row is one message over the full task window. Bars show the real stage windows, including reconstructed T5 load/prefill/decode slices, so you can see where software stages overlap and when work is handed to the GPU-heavy inference path.</p>
+      <div class="download-row small">
+        <button class="dl-btn" data-download="scenario-gantt-svg">Download scenario gantt SVG</button>
+      </div>
+      <svg class="gantt-svg" data-scenario-gantt="true" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Scenario Message Gantt">
+        <rect width="${width}" height="${height}" fill="#ffffff" />
+        ${gridLines
+          .map(
+            (line) => `
+              <line x1="${line.x.toFixed(1)}" y1="${paddingTop - 6}" x2="${line.x.toFixed(1)}" y2="${height - paddingBottom + 2}" class="guide stage-guide" />
+              <text x="${line.x.toFixed(1)}" y="${height - 8}" text-anchor="middle" class="axis-label">${escapeHtml(line.label)}</text>`,
+          )
+          .join("")}
+        ${rows}
+        <text x="${width / 2}" y="16" text-anchor="middle" class="chart-overlay-title">Scenario Message Gantt</text>
+      </svg>
+    </section>`;
+}
+
 function renderMessageCards(
   messages: LatencyMessageSummary[],
   hardwareSamples: HardwareTraceSample[],
@@ -882,6 +1058,7 @@ function renderMessageCards(
           ${renderPerMessageButtons(index)}
           <div class="message-grid">${rows}</div>
           ${renderMessageUtilCharts(message, index, hardwareSamples)}
+          ${renderMessageStageHardwareMatrix(message)}
           <div class="message-hardware-grid">
             ${renderHardwareWindowCard("RAG Recall Hardware", message.hardwareRag)}
             ${renderHardwareWindowCard("LLM Inference Hardware", message.hardwareLlm)}
@@ -1519,6 +1696,7 @@ export function renderLatencyReportHtml(
     .chart-title { font-weight: 700; }
     .chart-subtitle { color: var(--muted); font-size: 12px; }
     .chart-svg { width: 100%; height: 220px; display: block; background: linear-gradient(180deg, rgba(15,118,110,0.06), rgba(15,118,110,0.01)); border-radius: 12px; }
+    .gantt-svg { width: 100%; height: 320px; display: block; background: linear-gradient(180deg, rgba(15,118,110,0.04), rgba(15,118,110,0.01)); border-radius: 12px; }
     .axis { stroke: rgba(15,23,42,0.16); stroke-width: 1; }
     .tick { stroke: rgba(15,23,42,0.22); stroke-width: 1; }
     .guide { stroke-width: 1.8; stroke-dasharray: 6 4; }
@@ -1555,6 +1733,7 @@ export function renderLatencyReportHtml(
     </section>
 
     ${renderScenarioSection(report, hardwareSamples)}
+    ${renderScenarioMessageGantt(report)}
     <section class="panel">
       <h2>Per-message Timeline</h2>
       <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>
@@ -1707,6 +1886,13 @@ export function renderLatencyReportHtml(
         if (type === "message-csv") {
           const index = Number(button.getAttribute("data-message-index"));
           downloadText("message-" + index + ".csv", messageToCsv(MESSAGES[index]), "text/csv;charset=utf-8");
+          return;
+        }
+        if (type === "scenario-gantt-svg") {
+          const svg = document.querySelector('[data-scenario-gantt="true"]');
+          if (svg) {
+            downloadSvg("scenario-message-gantt.svg", svg.outerHTML);
+          }
           return;
         }
         if (type === "chart-svg") {
