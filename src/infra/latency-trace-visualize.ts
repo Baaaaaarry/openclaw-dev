@@ -34,6 +34,31 @@ type GanttSegment = {
   color: string;
 };
 
+type TimeWindow = {
+  startedAtMs: number;
+  endedAtMs: number;
+};
+
+type ActiveScenarioStage = {
+  messageLabel: string;
+  stageLabel: string;
+  stageKind: "t1" | "t2" | "t3" | "t4" | "rag" | "load" | "prefill" | "decode" | "t6";
+};
+
+type ScenarioChangeEvent = {
+  index: number;
+  epochMs: number;
+  elapsedMs: number;
+  cpuValue?: number;
+  gpuValue?: number;
+  cpuDelta?: number;
+  gpuDelta?: number;
+  activeStages: ActiveScenarioStage[];
+  stageText: string;
+  title: string;
+  reason: string;
+};
+
 type MetricSummary = {
   avg?: number;
   max?: number;
@@ -135,6 +160,14 @@ function formatUnit(unit: string, value: number | undefined): string {
       }
       return `${value.toFixed(1)} ${unit}`;
   }
+}
+
+function formatDelta(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)} pts`;
 }
 
 function deriveGpuUtilForSample(sample: HardwareTraceSample): number | undefined {
@@ -281,6 +314,327 @@ function buildMessageGanttSegments(message: LatencyMessageSummary): GanttSegment
   }
   pushWindow("T6", "#ec4899", message.t6WindowStartedAtMs, message.t6WindowEndedAtMs);
   return segments;
+}
+
+function isWindowActive(window: TimeWindow | undefined, epochMs: number): boolean {
+  return Boolean(
+    window &&
+    Number.isFinite(window.startedAtMs) &&
+    Number.isFinite(window.endedAtMs) &&
+    epochMs >= window.startedAtMs &&
+    epochMs <= window.endedAtMs,
+  );
+}
+
+function findActiveScenarioStages(
+  messages: LatencyMessageSummary[],
+  epochMs: number,
+): ActiveScenarioStage[] {
+  const active: ActiveScenarioStage[] = [];
+  const messageLabelFor = (message: LatencyMessageSummary) =>
+    String(message.messageId ?? message.runId ?? message.key);
+  const pushStage = (
+    message: LatencyMessageSummary,
+    stageKind: ActiveScenarioStage["stageKind"],
+    stageLabel: string,
+  ) => {
+    active.push({
+      messageLabel: messageLabelFor(message),
+      stageKind,
+      stageLabel,
+    });
+  };
+  for (const message of messages) {
+    const ragWindow =
+      typeof message.ragWindowStartedAtMs === "number" &&
+      typeof message.ragWindowEndedAtMs === "number"
+        ? { startedAtMs: message.ragWindowStartedAtMs, endedAtMs: message.ragWindowEndedAtMs }
+        : undefined;
+    const t1Window =
+      typeof message.t1WindowStartedAtMs === "number" &&
+      typeof message.t1WindowEndedAtMs === "number"
+        ? { startedAtMs: message.t1WindowStartedAtMs, endedAtMs: message.t1WindowEndedAtMs }
+        : undefined;
+    const t2Window =
+      typeof message.t2WindowStartedAtMs === "number" &&
+      typeof message.t2WindowEndedAtMs === "number"
+        ? { startedAtMs: message.t2WindowStartedAtMs, endedAtMs: message.t2WindowEndedAtMs }
+        : undefined;
+    const t3Window =
+      typeof message.t3WindowStartedAtMs === "number" &&
+      typeof message.t3WindowEndedAtMs === "number"
+        ? { startedAtMs: message.t3WindowStartedAtMs, endedAtMs: message.t3WindowEndedAtMs }
+        : undefined;
+    const t4Window =
+      typeof message.t4WindowStartedAtMs === "number" &&
+      typeof message.t4WindowEndedAtMs === "number"
+        ? { startedAtMs: message.t4WindowStartedAtMs, endedAtMs: message.t4WindowEndedAtMs }
+        : undefined;
+    const t6Window =
+      typeof message.t6WindowStartedAtMs === "number" &&
+      typeof message.t6WindowEndedAtMs === "number"
+        ? { startedAtMs: message.t6WindowStartedAtMs, endedAtMs: message.t6WindowEndedAtMs }
+        : undefined;
+
+    if (isWindowActive(t1Window, epochMs)) {
+      pushStage(message, "t1", "T1 inbound");
+      continue;
+    }
+    if (isWindowActive(t2Window, epochMs)) {
+      pushStage(message, "t2", "T2 enqueue");
+      continue;
+    }
+    if (isWindowActive(t3Window, epochMs)) {
+      pushStage(message, "t3", "T3 queue wait");
+      continue;
+    }
+    const activeLoad = (message.t5LoadWindows ?? []).some((window) =>
+      isWindowActive(window, epochMs),
+    );
+    if (activeLoad) {
+      pushStage(message, "load", "T5.load");
+      continue;
+    }
+    const activePrefill = (message.t5PrefillWindows ?? []).some((window) =>
+      isWindowActive(window, epochMs),
+    );
+    if (activePrefill) {
+      pushStage(message, "prefill", "T5.prefill");
+      continue;
+    }
+    const activeDecode = (message.t5DecodeWindows ?? []).some((window) =>
+      isWindowActive(window, epochMs),
+    );
+    if (activeDecode) {
+      pushStage(message, "decode", "T5.decode");
+      continue;
+    }
+    if (isWindowActive(ragWindow, epochMs)) {
+      pushStage(message, "rag", "RAG recall");
+      continue;
+    }
+    if (isWindowActive(t4Window, epochMs)) {
+      pushStage(message, "t4", "T4 preprocess");
+      continue;
+    }
+    if (isWindowActive(t6Window, epochMs)) {
+      pushStage(message, "t6", "T6 outbound");
+    }
+  }
+  return active;
+}
+
+function summarizeActiveStageText(activeStages: ActiveScenarioStage[]): string {
+  if (activeStages.length === 0) {
+    return "No active tracked stage";
+  }
+  return activeStages
+    .map((stage) => `${stage.messageLabel} / ${stage.stageLabel}`)
+    .slice(0, 3)
+    .join(" | ");
+}
+
+function explainScenarioChange(params: {
+  activeStages: ActiveScenarioStage[];
+  cpuDelta?: number;
+  gpuDelta?: number;
+  cpuValue?: number;
+  gpuValue?: number;
+}): { title: string; reason: string } {
+  const { activeStages, cpuDelta, gpuDelta, gpuValue } = params;
+  const hasStage = (kind: ActiveScenarioStage["stageKind"]) =>
+    activeStages.some((stage) => stage.stageKind === kind);
+  const maxDelta = Math.max(Math.abs(cpuDelta ?? 0), Math.abs(gpuDelta ?? 0));
+  if (hasStage("load")) {
+    if ((gpuDelta ?? 0) <= -20 || (gpuValue ?? 0) < 25) {
+      return {
+        title: "GPU drop in T5.load",
+        reason:
+          "The LLM call entered a load or runtime re-entry slice. CPU is handling session setup, model/runtime handoff, or context/KV preparation, so GPU compute temporarily drains.",
+      };
+    }
+    return {
+      title: "CPU spike in T5.load",
+      reason:
+        "This is the load path before steady inference. CPU work rises because the runtime is preparing the call and GPU occupancy has not yet reached sustained prefill/decode level.",
+    };
+  }
+  if (hasStage("prefill")) {
+    if ((gpuDelta ?? 0) >= 18) {
+      return {
+        title: "GPU ramp into T5.prefill",
+        reason:
+          "Prompt ingestion started. The model is consuming input tokens, which quickly drives GPU occupancy up while CPU remains mostly orchestration-only.",
+      };
+    }
+    if ((gpuDelta ?? 0) <= -18) {
+      return {
+        title: "GPU dip at prefill boundary",
+        reason:
+          "A prefill slice just ended or another short call boundary interrupted continuous compute. This usually happens between multi-call turns, tool loops, or subagent handoffs.",
+      };
+    }
+  }
+  if (hasStage("decode")) {
+    if ((gpuDelta ?? 0) >= 15) {
+      return {
+        title: "GPU resumed T5.decode",
+        reason:
+          "Token generation resumed on the GPU. This is the steady decode path, so GPU stays high while CPU only handles streaming and light bookkeeping.",
+      };
+    }
+    if ((gpuDelta ?? 0) <= -15) {
+      return {
+        title: "GPU dip inside T5.decode",
+        reason:
+          "This usually marks the end of one decode slice and the handoff to the next load or prefill slice. In multi-call scenes it appears as short valleys between turns.",
+      };
+    }
+  }
+  if (hasStage("rag")) {
+    return {
+      title: "RAG recall transition",
+      reason:
+        "The change happened during runtime memory recall. The spike comes from embedding or retrieval dispatch and context assembly before the first model turn.",
+    };
+  }
+  if (hasStage("t4")) {
+    return {
+      title: "T4 preprocess transition",
+      reason:
+        "The change happened in agent-side preprocessing. This is CPU-side prompt assembly, memory merge, tool schema injection, or session preparation before the LLM call starts.",
+    };
+  }
+  if (hasStage("t6")) {
+    return {
+      title: "T6 outbound transition",
+      reason:
+        "The scene was already in output/ack handling. GPU should be low here; any CPU movement is typically response formatting, transport, or callback processing.",
+    };
+  }
+  if ((gpuDelta ?? 0) <= -20 && maxDelta >= 20) {
+    return {
+      title: "GPU idle gap",
+      reason:
+        "A previous compute slice ended and no new tracked inference stage was active at this sample. This is usually a gap between messages or between multi-call turns.",
+    };
+  }
+  return {
+    title: "Scene transition",
+    reason:
+      "The hardware trace crossed a stage boundary or a concurrency change. The current samples show a real pressure shift, but the exact operation is outside the tracked T1-T6/RAG/T5 sub-stage windows.",
+  };
+}
+
+function buildScenarioChangeEvents(
+  report: LatencyAggregateReport,
+  hardwareSamples: HardwareTraceSample[],
+): ScenarioChangeEvent[] {
+  const scenario = report.scenario;
+  if (
+    !scenario ||
+    typeof scenario.startedAtMs !== "number" ||
+    !Number.isFinite(scenario.startedAtMs) ||
+    typeof scenario.endedAtMs !== "number" ||
+    !Number.isFinite(scenario.endedAtMs)
+  ) {
+    return [];
+  }
+  const samples = filterSamplesForWindow(
+    hardwareSamples,
+    scenario.startedAtMs,
+    scenario.endedAtMs,
+  ).toSorted((left, right) => left.epochMs - right.epochMs);
+  const rawEvents: Array<Omit<ScenarioChangeEvent, "index">> = [];
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1];
+    const current = samples[index];
+    const previousCpu = previous.cpuUtilPct ?? 0;
+    const currentCpu = current.cpuUtilPct ?? 0;
+    const previousGpu = deriveGpuUtilForSample(previous) ?? 0;
+    const currentGpu = deriveGpuUtilForSample(current) ?? 0;
+    const cpuDelta = currentCpu - previousCpu;
+    const gpuDelta = currentGpu - previousGpu;
+    if (Math.abs(cpuDelta) < 12 && Math.abs(gpuDelta) < 18) {
+      continue;
+    }
+    const activeStages = findActiveScenarioStages(report.messages, current.epochMs);
+    const explanation = explainScenarioChange({
+      activeStages,
+      cpuDelta,
+      gpuDelta,
+      cpuValue: currentCpu,
+      gpuValue: currentGpu,
+    });
+    rawEvents.push({
+      epochMs: current.epochMs,
+      elapsedMs: current.epochMs - scenario.startedAtMs,
+      cpuValue: currentCpu,
+      gpuValue: currentGpu,
+      cpuDelta,
+      gpuDelta,
+      activeStages,
+      stageText: summarizeActiveStageText(activeStages),
+      title: explanation.title,
+      reason: explanation.reason,
+    });
+  }
+  const merged: Array<Omit<ScenarioChangeEvent, "index">> = [];
+  for (const event of rawEvents) {
+    const previous = merged.at(-1);
+    const score = Math.max(Math.abs(event.cpuDelta ?? 0), Math.abs(event.gpuDelta ?? 0));
+    const previousScore = previous
+      ? Math.max(Math.abs(previous.cpuDelta ?? 0), Math.abs(previous.gpuDelta ?? 0))
+      : -1;
+    if (previous && event.epochMs - previous.epochMs <= 1600) {
+      if (score > previousScore) {
+        merged[merged.length - 1] = event;
+      }
+      continue;
+    }
+    merged.push(event);
+  }
+  return merged.map((event, index) => ({ ...event, index: index + 1 }));
+}
+
+function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
+  if (events.length === 0) {
+    return "";
+  }
+  return `
+    <section class="mini-panel" style="margin-top:14px">
+      <div class="mini-panel-title">Scenario Change Log</div>
+      <p class="section-note">Each numbered event is a significant CPU/GPU step change aligned to the tracked software windows. This is a timing correlation, not a PMU-level causal proof, but it is enough to explain what the runtime was doing at each visible jump.</p>
+      <table class="series-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>CPU Delta</th>
+            <th>GPU Delta</th>
+            <th>Active Stage</th>
+            <th>Interpretation</th>
+            <th>Reason</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${events
+            .map(
+              (event) => `
+                <tr>
+                  <td><span class="event-badge">${event.index}</span></td>
+                  <td>${escapeHtml(formatMs(event.elapsedMs))}</td>
+                  <td>${escapeHtml(formatDelta(event.cpuDelta))}</td>
+                  <td>${escapeHtml(formatDelta(event.gpuDelta))}</td>
+                  <td>${escapeHtml(event.stageText)}</td>
+                  <td>${escapeHtml(event.title)}</td>
+                  <td>${escapeHtml(event.reason)}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </section>`;
 }
 
 function buildMessageCsv(messages: LatencyMessageSummary[]): string {
@@ -1034,6 +1388,7 @@ function renderScenarioCpuGpuOverlay(
   if (samples.length === 0) {
     return "";
   }
+  const changeEvents = buildScenarioChangeEvents(report, hardwareSamples);
   const width = 1160;
   const height = 260;
   const paddingLeft = 110;
@@ -1086,10 +1441,19 @@ function renderScenarioCpuGpuOverlay(
   const legendBoxY = 8;
   const legendBoxWidth = 170;
   const legendBoxHeight = 46;
+  const markerCircles = changeEvents
+    .map((event) => {
+      const x = paddingLeft + (event.elapsedMs / totalMs) * (width - paddingLeft - paddingRight);
+      return `
+        <line x1="${x.toFixed(1)}" y1="${paddingTop}" x2="${x.toFixed(1)}" y2="${height - paddingBottom}" stroke="rgba(15,23,42,0.10)" stroke-width="1" stroke-dasharray="3 5" />
+        <circle cx="${x.toFixed(1)}" cy="${paddingTop + 10}" r="9" fill="#111827" opacity="0.92" />
+        <text x="${x.toFixed(1)}" y="${paddingTop + 14}" text-anchor="middle" class="event-marker-text">${event.index}</text>`;
+    })
+    .join("");
   return `
     <section class="panel" style="margin-top:20px">
       <h2>Scenario CPU/GPU Overlay</h2>
-      <p class="section-note">CPU and GPU utilization on the same scene-wide time axis as the gantt, so you can visually match software stage overlaps with hardware pressure changes.</p>
+      <p class="section-note">CPU and GPU utilization on the same scene-wide time axis as the gantt, so you can visually match software stage overlaps with hardware pressure changes. Numbered markers indicate significant utilization jumps; the change log below explains what each jump corresponds to.</p>
       <div class="download-row small">
         <button class="dl-btn" data-download="scenario-cpu-gpu-svg">Download scenario CPU/GPU SVG</button>
       </div>
@@ -1101,6 +1465,7 @@ function renderScenarioCpuGpuOverlay(
         <line x1="${paddingLeft}" y1="${yForPct(avgGpu)}" x2="${width - paddingRight}" y2="${yForPct(avgGpu)}" class="guide stage-guide" />
         <line x1="${paddingLeft}" y1="${yForPct(maxCpu)}" x2="${width - paddingRight}" y2="${yForPct(maxCpu)}" class="guide avg-guide" stroke-opacity="0.45" />
         <line x1="${paddingLeft}" y1="${yForPct(maxGpu)}" x2="${width - paddingRight}" y2="${yForPct(maxGpu)}" class="guide stage-guide" stroke-opacity="0.45" />
+        ${markerCircles}
         <polyline points="${cpuPolyline}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <polyline points="${gpuPolyline}" fill="none" stroke="#f97316" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">Scenario CPU/GPU Utilization</text>
@@ -1121,6 +1486,7 @@ function renderScenarioCpuGpuOverlay(
         <line x1="${legendBoxX + 10}" y1="${legendBoxY + 32}" x2="${legendBoxX + 42}" y2="${legendBoxY + 32}" stroke="#f97316" stroke-width="3" />
         <text x="${legendBoxX + 50}" y="${legendBoxY + 36}" class="axis-label">GPU</text>
       </svg>
+      ${renderScenarioChangeLog(changeEvents)}
     </section>`;
 }
 
@@ -1816,6 +2182,18 @@ export function renderLatencyReportHtml(
     .axis-label { fill: #6b7280; font-size: 11px; font-family: "Helvetica Neue", Arial, sans-serif; }
     .chart-overlay-title { fill: #111827; font-size: 16px; font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; }
     .chart-overlay-subtitle { fill: #374151; font-size: 13px; font-family: "Helvetica Neue", Arial, sans-serif; }
+    .event-marker-text { fill: #ffffff; font-size: 11px; font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 700; }
+    .event-badge {
+      display: inline-grid;
+      place-items: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #111827;
+      color: #ffffff;
+      font: 700 12px/1 "Helvetica Neue", Arial, sans-serif;
+    }
     .chart-empty { display: grid; place-items: center; height: 220px; border-radius: 12px; background: rgba(148,163,184,0.12); color: var(--muted); border: 1px dashed rgba(148,163,184,0.28); }
     .download-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 0; }
     .download-row.small { margin: 0 0 12px; }
