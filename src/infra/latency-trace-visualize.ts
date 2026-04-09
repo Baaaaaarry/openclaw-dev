@@ -1,4 +1,4 @@
-import type { HardwareTraceSample } from "./hardware-trace.js";
+import type { HardwareThreadSample, HardwareTraceSample } from "./hardware-trace.js";
 import type {
   HardwareWindowSummary,
   LatencyAggregateReport,
@@ -55,8 +55,9 @@ type ScenarioChangeEvent = {
   gpuDelta?: number;
   activeStages: ActiveScenarioStage[];
   stageText: string;
-  title: string;
-  reason: string;
+  topThreads: HardwareThreadSample[];
+  threadEvidenceText: string;
+  summary: string;
 };
 
 type MetricSummary = {
@@ -168,6 +169,21 @@ function formatDelta(value: number | undefined): string {
   }
   const sign = value > 0 ? "+" : "";
   return `${sign}${value.toFixed(1)} pts`;
+}
+
+function formatThreadEvidence(threads: HardwareThreadSample[]): string {
+  if (threads.length === 0) {
+    return "No thread snapshot";
+  }
+  return threads
+    .slice(0, 3)
+    .map((thread) => {
+      const command = thread.command ?? "unknown";
+      const cpu = formatPct(thread.cpuPct);
+      const tid = typeof thread.tid === "number" ? ` tid=${thread.tid}` : "";
+      return `${command}${tid} ${cpu}`;
+    })
+    .join(" | ");
 }
 
 function deriveGpuUtilForSample(sample: HardwareTraceSample): number | undefined {
@@ -434,96 +450,52 @@ function summarizeActiveStageText(activeStages: ActiveScenarioStage[]): string {
     .join(" | ");
 }
 
-function explainScenarioChange(params: {
+function summarizeScenarioChange(params: {
   activeStages: ActiveScenarioStage[];
   cpuDelta?: number;
   gpuDelta?: number;
-  cpuValue?: number;
-  gpuValue?: number;
-}): { title: string; reason: string } {
-  const { activeStages, cpuDelta, gpuDelta, gpuValue } = params;
+  topThreads: HardwareThreadSample[];
+}): string {
+  const { activeStages, gpuDelta, topThreads } = params;
   const hasStage = (kind: ActiveScenarioStage["stageKind"]) =>
     activeStages.some((stage) => stage.stageKind === kind);
-  const maxDelta = Math.max(Math.abs(cpuDelta ?? 0), Math.abs(gpuDelta ?? 0));
+  const dominantThread = topThreads[0]?.command?.toLowerCase() ?? "";
+  const dominantCpu = topThreads[0]?.cpuPct;
   if (hasStage("load")) {
-    if ((gpuDelta ?? 0) <= -20 || (gpuValue ?? 0) < 25) {
-      return {
-        title: "GPU drop in T5.load",
-        reason:
-          "The LLM call entered a load or runtime re-entry slice. CPU is handling session setup, model/runtime handoff, or context/KV preparation, so GPU compute temporarily drains.",
-      };
+    if (dominantThread.includes("ollama")) {
+      return "Correlated with T5.load, and the hottest CPU thread belongs to Ollama/runtime. Evidence points to model/runtime side setup rather than steady GPU compute.";
     }
-    return {
-      title: "CPU spike in T5.load",
-      reason:
-        "This is the load path before steady inference. CPU work rises because the runtime is preparing the call and GPU occupancy has not yet reached sustained prefill/decode level.",
-    };
+    return "Correlated with T5.load. CPU-side setup dominates at this boundary; use the thread snapshot to distinguish OpenClaw orchestration from runtime/model preparation.";
   }
   if (hasStage("prefill")) {
     if ((gpuDelta ?? 0) >= 18) {
-      return {
-        title: "GPU ramp into T5.prefill",
-        reason:
-          "Prompt ingestion started. The model is consuming input tokens, which quickly drives GPU occupancy up while CPU remains mostly orchestration-only.",
-      };
+      return "Correlated with T5.prefill. GPU rises as prompt ingestion starts; the thread list shows which process is spending CPU to feed that transition.";
     }
     if ((gpuDelta ?? 0) <= -18) {
-      return {
-        title: "GPU dip at prefill boundary",
-        reason:
-          "A prefill slice just ended or another short call boundary interrupted continuous compute. This usually happens between multi-call turns, tool loops, or subagent handoffs.",
-      };
+      return "Correlated with a prefill boundary. This is a real compute interruption, but the thread snapshot should be used as the primary evidence for who owned the CPU work.";
     }
   }
   if (hasStage("decode")) {
     if ((gpuDelta ?? 0) >= 15) {
-      return {
-        title: "GPU resumed T5.decode",
-        reason:
-          "Token generation resumed on the GPU. This is the steady decode path, so GPU stays high while CPU only handles streaming and light bookkeeping.",
-      };
+      return "Correlated with T5.decode. GPU compute resumed; CPU evidence should usually show only light runtime or streaming overhead.";
     }
     if ((gpuDelta ?? 0) <= -15) {
-      return {
-        title: "GPU dip inside T5.decode",
-        reason:
-          "This usually marks the end of one decode slice and the handoff to the next load or prefill slice. In multi-call scenes it appears as short valleys between turns.",
-      };
+      return "Correlated with a decode boundary. In multi-call scenes this often marks a handoff to the next load/prefill slice, but confirm with the thread evidence.";
     }
   }
   if (hasStage("rag")) {
-    return {
-      title: "RAG recall transition",
-      reason:
-        "The change happened during runtime memory recall. The spike comes from embedding or retrieval dispatch and context assembly before the first model turn.",
-    };
+    return "Correlated with runtime RAG recall. The thread snapshot shows whether the CPU was busy in retrieval/indexing glue or in the embedding/runtime process.";
   }
   if (hasStage("t4")) {
-    return {
-      title: "T4 preprocess transition",
-      reason:
-        "The change happened in agent-side preprocessing. This is CPU-side prompt assembly, memory merge, tool schema injection, or session preparation before the LLM call starts.",
-    };
+    return "Correlated with T4 preprocess. This is CPU-side work before the model call; thread evidence should identify whether OpenClaw itself was the hotspot.";
   }
   if (hasStage("t6")) {
-    return {
-      title: "T6 outbound transition",
-      reason:
-        "The scene was already in output/ack handling. GPU should be low here; any CPU movement is typically response formatting, transport, or callback processing.",
-    };
+    return "Correlated with T6 outbound handling. GPU should already be low here; thread evidence should confirm transport/formatting dominated.";
   }
-  if ((gpuDelta ?? 0) <= -20 && maxDelta >= 20) {
-    return {
-      title: "GPU idle gap",
-      reason:
-        "A previous compute slice ended and no new tracked inference stage was active at this sample. This is usually a gap between messages or between multi-call turns.",
-    };
+  if (typeof dominantCpu === "number" && dominantCpu > 0) {
+    return "No tracked stage owned this sample strongly enough. Use the top CPU threads as the primary evidence for what code path was active.";
   }
-  return {
-    title: "Scene transition",
-    reason:
-      "The hardware trace crossed a stage boundary or a concurrency change. The current samples show a real pressure shift, but the exact operation is outside the tracked T1-T6/RAG/T5 sub-stage windows.",
-  };
+  return "A stage boundary or concurrency change occurred, but the sample has no strong thread evidence. Increase sampling frequency if this point matters.";
 }
 
 function buildScenarioChangeEvents(
@@ -558,13 +530,13 @@ function buildScenarioChangeEvents(
     if (Math.abs(cpuDelta) < 12 && Math.abs(gpuDelta) < 18) {
       continue;
     }
+    const topThreads = current.topCpuThreads ?? [];
     const activeStages = findActiveScenarioStages(report.messages, current.epochMs);
-    const explanation = explainScenarioChange({
+    const summary = summarizeScenarioChange({
       activeStages,
       cpuDelta,
       gpuDelta,
-      cpuValue: currentCpu,
-      gpuValue: currentGpu,
+      topThreads,
     });
     rawEvents.push({
       epochMs: current.epochMs,
@@ -575,8 +547,9 @@ function buildScenarioChangeEvents(
       gpuDelta,
       activeStages,
       stageText: summarizeActiveStageText(activeStages),
-      title: explanation.title,
-      reason: explanation.reason,
+      topThreads,
+      threadEvidenceText: formatThreadEvidence(topThreads),
+      summary,
     });
   }
   const merged: Array<Omit<ScenarioChangeEvent, "index">> = [];
@@ -613,8 +586,8 @@ function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
             <th>CPU Delta</th>
             <th>GPU Delta</th>
             <th>Active Stage</th>
-            <th>Interpretation</th>
-            <th>Reason</th>
+            <th>Top CPU Threads</th>
+            <th>Evidence-based Note</th>
           </tr>
         </thead>
         <tbody>
@@ -627,8 +600,8 @@ function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
                   <td>${escapeHtml(formatDelta(event.cpuDelta))}</td>
                   <td>${escapeHtml(formatDelta(event.gpuDelta))}</td>
                   <td>${escapeHtml(event.stageText)}</td>
-                  <td>${escapeHtml(event.title)}</td>
-                  <td>${escapeHtml(event.reason)}</td>
+                  <td>${escapeHtml(event.threadEvidenceText)}</td>
+                  <td>${escapeHtml(event.summary)}</td>
                 </tr>`,
             )
             .join("")}
@@ -845,6 +818,7 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
     "memFreeBytes",
     "memUsedBytes",
     "memUtilPct",
+    "topCpuThreads",
     "gpuIndex",
     "gpuName",
     "gpuUtilPct",
@@ -871,6 +845,7 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
           sample.memFreeBytes,
           sample.memUsedBytes,
           sample.memUtilPct,
+          JSON.stringify(sample.topCpuThreads ?? []),
           "",
           "",
           "",
@@ -900,6 +875,7 @@ function buildHardwareCsv(samples: HardwareTraceSample[]): string {
           sample.memFreeBytes,
           sample.memUsedBytes,
           sample.memUtilPct,
+          JSON.stringify(sample.topCpuThreads ?? []),
           gpu.index,
           gpu.name,
           gpu.utilizationGpuPct,
