@@ -1036,7 +1036,7 @@ function renderScenarioCpuGpuOverlay(
   }
   const width = 1160;
   const height = 260;
-  const paddingLeft = 100;
+  const paddingLeft = 110;
   const paddingRight = 28;
   const paddingTop = 42;
   const paddingBottom = 42;
@@ -1066,17 +1066,20 @@ function renderScenarioCpuGpuOverlay(
   const maxCpu = Math.max(...cpuValues);
   const maxGpu = Math.max(...gpuValues);
   const axisLabels = [
-    { text: `CPU max ${formatPct(maxCpu)}`, color: "#0f766e", y: yForPct(maxCpu) },
-    { text: `CPU avg ${formatPct(avgCpu)}`, color: "#0f766e", y: yForPct(avgCpu) },
-    { text: `GPU max ${formatPct(maxGpu)}`, color: "#f97316", y: yForPct(maxGpu) },
-    { text: `GPU avg ${formatPct(avgGpu)}`, color: "#f97316", y: yForPct(avgGpu) },
+    { text: `max ${formatPct(maxCpu)}`, color: "#0f766e", y: yForPct(maxCpu) },
+    { text: `avg ${formatPct(avgCpu)}`, color: "#0f766e", y: yForPct(avgCpu) },
+    { text: `max ${formatPct(maxGpu)}`, color: "#f97316", y: yForPct(maxGpu) },
+    { text: `avg ${formatPct(avgGpu)}`, color: "#f97316", y: yForPct(avgGpu) },
   ]
     .toSorted((left, right) => left.y - right.y)
     .map((entry, index, items) => {
       const previous = items[index - 1];
+      const minGap = 12;
+      const unclampedY =
+        previous && Math.abs(entry.y - previous.y) < minGap ? previous.y + minGap : entry.y;
       return {
         ...entry,
-        y: previous && Math.abs(entry.y - previous.y) < 12 ? previous.y + 12 : entry.y,
+        y: Math.max(paddingTop + 10, Math.min(height - paddingBottom - 2, unclampedY)),
       };
     });
   const legendBoxX = width - 188;
@@ -1104,7 +1107,7 @@ function renderScenarioCpuGpuOverlay(
         <text x="${width / 2}" y="34" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`CPU avg: ${formatPct(avgCpu)} | GPU avg: ${formatPct(avgGpu)}`)}</text>
         <text x="${paddingLeft}" y="${height - 10}" text-anchor="start" class="axis-label">0 ms</text>
         <text x="${width - paddingRight}" y="${height - 10}" text-anchor="end" class="axis-label">${escapeHtml(`${Math.round(totalMs)} ms`)}</text>
-        <text x="24" y="${height / 2}" text-anchor="middle" transform="rotate(-90 24 ${height / 2})" class="axis-label">Utilization (%)</text>
+        <text x="18" y="${height / 2}" text-anchor="middle" transform="rotate(-90 18 ${height / 2})" class="axis-label">Utilization (%)</text>
         ${axisLabels
           .map(
             (entry) => `
