@@ -26,6 +26,14 @@ type HardwareTraceState = {
   lastCpu?: CpuSnapshot;
 };
 
+export type HardwareThreadSample = {
+  pid?: number;
+  tid?: number;
+  cpuPct?: number;
+  command?: string;
+  args?: string;
+};
+
 export type HardwareGpuSample = {
   index?: number;
   name?: string;
@@ -57,6 +65,7 @@ export type HardwareTraceSample = {
   memUsedBytes: number;
   memUtilPct: number;
   gpus?: HardwareGpuSample[];
+  topCpuThreads?: HardwareThreadSample[];
 };
 
 function getState(): HardwareTraceState {
@@ -292,6 +301,67 @@ async function collectNvidiaGpuSamples(): Promise<HardwareGpuSample[] | undefine
     .map((sample) => finalizeGpuSample(sample));
 }
 
+function truncateText(value: string | undefined, maxChars: number): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value.length > maxChars ? `${value.slice(0, Math.max(0, maxChars - 1))}…` : value;
+}
+
+function resolveThreadSampleLimit(env: NodeJS.ProcessEnv = process.env): number {
+  const parsed = Number(env.OPENCLAW_HARDWARE_TRACE_THREAD_LIMIT);
+  if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 64) {
+    return Math.floor(parsed);
+  }
+  return 8;
+}
+
+async function collectTopCpuThreads(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<HardwareThreadSample[] | undefined> {
+  if (process.platform !== "linux") {
+    return undefined;
+  }
+  try {
+    const limit = resolveThreadSampleLimit(env);
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-eLo", "pid=,tid=,pcpu=,comm=,args=", "--sort=-pcpu"],
+      { timeout: 700, maxBuffer: 1024 * 1024 },
+    );
+    const rows = stdout
+      .trim()
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const samples: HardwareThreadSample[] = [];
+    for (const row of rows) {
+      const match = row.match(/^(\d+)\s+(\d+)\s+([0-9.]+)\s+(\S+)\s*(.*)$/);
+      if (!match) {
+        continue;
+      }
+      const [, pid, tid, cpuPct, command, args] = match;
+      const parsedCpuPct = toNumber(cpuPct);
+      if (typeof parsedCpuPct !== "number" || !Number.isFinite(parsedCpuPct) || parsedCpuPct <= 0) {
+        continue;
+      }
+      samples.push({
+        pid: toNumber(pid),
+        tid: toNumber(tid),
+        cpuPct: parsedCpuPct,
+        command: truncateText(command, 48),
+        args: truncateText(args, 160),
+      });
+      if (samples.length >= limit) {
+        break;
+      }
+    }
+    return samples.length > 0 ? samples : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function collectHardwareSample(state: HardwareTraceState): Promise<HardwareTraceSample> {
   const epochMs = Date.now();
   const cpuSnapshot = getCpuSnapshot();
@@ -301,6 +371,10 @@ async function collectHardwareSample(state: HardwareTraceState): Promise<Hardwar
   const memTotalBytes = os.totalmem();
   const memFreeBytes = os.freemem();
   const memUsedBytes = Math.max(0, memTotalBytes - memFreeBytes);
+  const [gpus, topCpuThreads] = await Promise.all([
+    collectNvidiaGpuSamples(),
+    collectTopCpuThreads(),
+  ]);
   return {
     ts: new Date(epochMs).toISOString(),
     epochMs,
@@ -312,7 +386,8 @@ async function collectHardwareSample(state: HardwareTraceState): Promise<Hardwar
     memFreeBytes,
     memUsedBytes,
     memUtilPct: memTotalBytes > 0 ? (memUsedBytes / memTotalBytes) * 100 : 0,
-    gpus: await collectNvidiaGpuSamples(),
+    gpus,
+    topCpuThreads,
   };
 }
 

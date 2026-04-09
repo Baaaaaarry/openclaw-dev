@@ -349,4 +349,98 @@ describe("latency-trace-visualize", () => {
     const html = renderLatencyReportHtml({ report });
     expect(html).not.toContain('<div class="segment empty"></div>');
   });
+
+  it("renders thread evidence for scenario change events", () => {
+    const report: LatencyAggregateReport = {
+      recordsScanned: 1,
+      scenario: {
+        startedAtMs: 1_000,
+        endedAtMs: 1_500,
+        durationMs: 500,
+        messageCount: 1,
+        ragMessageCount: 0,
+        llmCallCount: 1,
+      },
+      messages: [
+        {
+          key: "webchat|default|msg3",
+          messageId: "msg3",
+          overallWindowStartedAtMs: 1_000,
+          overallWindowEndedAtMs: 1_500,
+          t4WindowStartedAtMs: 1_000,
+          t4WindowEndedAtMs: 1_050,
+          t5WindowStartedAtMs: 1_050,
+          t5WindowEndedAtMs: 1_450,
+          t5LoadWindows: [{ startedAtMs: 1_050, endedAtMs: 1_150 }],
+          t5PrefillWindows: [{ startedAtMs: 1_150, endedAtMs: 1_260 }],
+          t5DecodeWindows: [{ startedAtMs: 1_260, endedAtMs: 1_430 }],
+        },
+      ],
+      series: {},
+      comparisons: {
+        ragVsNoRag: {
+          rag: { count: 0 },
+          noRag: { count: 1 },
+        },
+      },
+    };
+    const html = renderLatencyReportHtml({
+      report,
+      hardwareSamples: [
+        {
+          ts: "2026-01-01T00:00:01.050Z",
+          epochMs: 1_050,
+          cpuUtilPct: 8,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 30,
+          memUsedBytes: 70,
+          memUtilPct: 70,
+          gpus: [{ index: 0, utilizationGpuPct: 4 }],
+          topCpuThreads: [
+            { pid: 10, tid: 11, cpuPct: 6.2, command: "node", args: "openclaw gateway run" },
+          ],
+        },
+        {
+          ts: "2026-01-01T00:00:01.200Z",
+          epochMs: 1_200,
+          cpuUtilPct: 32,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 28,
+          memUsedBytes: 72,
+          memUtilPct: 72,
+          gpus: [{ index: 0, utilizationGpuPct: 58 }],
+          topCpuThreads: [
+            { pid: 10, tid: 22, cpuPct: 24.1, command: "node", args: "openclaw gateway run" },
+            { pid: 90, tid: 90, cpuPct: 11.4, command: "ollama", args: "ollama runner" },
+          ],
+        },
+        {
+          ts: "2026-01-01T00:00:01.350Z",
+          epochMs: 1_350,
+          cpuUtilPct: 12,
+          loadAvg1: 1,
+          loadAvg5: 1,
+          loadAvg15: 1,
+          memTotalBytes: 100,
+          memFreeBytes: 26,
+          memUsedBytes: 74,
+          memUtilPct: 74,
+          gpus: [{ index: 0, utilizationGpuPct: 87 }],
+          topCpuThreads: [
+            { pid: 90, tid: 90, cpuPct: 7.3, command: "ollama", args: "ollama runner" },
+          ],
+        },
+      ],
+    });
+    expect(html).toContain("Scenario Change Log");
+    expect(html).toContain("Top CPU Threads");
+    expect(html).toContain("node tid=22 24.1%");
+    expect(html).toContain("Evidence-based Note");
+  });
 });
