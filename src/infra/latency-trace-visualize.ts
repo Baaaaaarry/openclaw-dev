@@ -82,6 +82,13 @@ function formatCount(value: number | undefined): string {
   return String(Math.round(value));
 }
 
+function formatLevel(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "N/A";
+  }
+  return value.toFixed(1);
+}
+
 function formatWatts(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "N/A";
@@ -536,6 +543,109 @@ function filterSamplesForWindow(
   return samples.filter((sample) => sample.epochMs >= startedAtMs && sample.epochMs <= endedAtMs);
 }
 
+function countActiveWindowsAt(
+  epochMs: number,
+  windows: Array<{ startedAtMs: number; endedAtMs: number }>,
+): number {
+  return windows.reduce(
+    (count, window) =>
+      epochMs >= window.startedAtMs && epochMs <= window.endedAtMs ? count + 1 : count,
+    0,
+  );
+}
+
+function collectScenarioWindows(report: LatencyAggregateReport): {
+  overall: Array<{ startedAtMs: number; endedAtMs: number }>;
+  rag: Array<{ startedAtMs: number; endedAtMs: number }>;
+  llm: Array<{ startedAtMs: number; endedAtMs: number }>;
+} {
+  const toWindow = (startedAtMs?: number, endedAtMs?: number) =>
+    typeof startedAtMs === "number" &&
+    Number.isFinite(startedAtMs) &&
+    typeof endedAtMs === "number" &&
+    Number.isFinite(endedAtMs) &&
+    endedAtMs > startedAtMs
+      ? { startedAtMs, endedAtMs }
+      : undefined;
+  return {
+    overall: report.messages
+      .map((message) => toWindow(message.overallWindowStartedAtMs, message.overallWindowEndedAtMs))
+      .filter(
+        (window): window is { startedAtMs: number; endedAtMs: number } => window !== undefined,
+      ),
+    rag: report.messages
+      .map((message) => toWindow(message.ragWindowStartedAtMs, message.ragWindowEndedAtMs))
+      .filter(
+        (window): window is { startedAtMs: number; endedAtMs: number } => window !== undefined,
+      ),
+    llm: report.messages
+      .map((message) => toWindow(message.t5WindowStartedAtMs, message.t5WindowEndedAtMs))
+      .filter(
+        (window): window is { startedAtMs: number; endedAtMs: number } => window !== undefined,
+      ),
+  };
+}
+
+function buildScenarioActivityMetric(params: {
+  report: LatencyAggregateReport;
+  samples: HardwareTraceSample[];
+  kind: "messages" | "rag" | "llm";
+}): ChartMetric {
+  const scenario = params.report.scenario;
+  const startedAtMs = scenario?.startedAtMs;
+  const endedAtMs = scenario?.endedAtMs;
+  const windows = collectScenarioWindows(params.report);
+  const scopedSamples = filterSamplesForWindow(params.samples, startedAtMs, endedAtMs);
+  const targetWindows =
+    params.kind === "messages"
+      ? windows.overall
+      : params.kind === "rag"
+        ? windows.rag
+        : windows.llm;
+  return {
+    id: `scenario-${params.kind}-activity`,
+    title:
+      params.kind === "messages"
+        ? "Scenario Message Concurrency"
+        : params.kind === "rag"
+          ? "Scenario RAG Recall Concurrency"
+          : "Scenario LLM Concurrency",
+    unit: "count",
+    points: scopedSamples.map((sample, index) => ({
+      x:
+        typeof startedAtMs === "number" && Number.isFinite(startedAtMs)
+          ? Math.max(0, sample.epochMs - startedAtMs)
+          : index,
+      y: countActiveWindowsAt(sample.epochMs, targetWindows),
+    })),
+    xAxisLabel: "Elapsed Time (ms)",
+  };
+}
+
+function buildScenarioHardwareMetric(params: {
+  report: LatencyAggregateReport;
+  samples: HardwareTraceSample[];
+  kind: "cpu" | "gpu";
+}): ChartMetric {
+  const scenario = params.report.scenario;
+  const startedAtMs = scenario?.startedAtMs;
+  const endedAtMs = scenario?.endedAtMs;
+  const scopedSamples = filterSamplesForWindow(params.samples, startedAtMs, endedAtMs);
+  return {
+    id: `scenario-${params.kind}-window`,
+    title: params.kind === "cpu" ? "Scenario CPU Utilization" : "Scenario GPU Utilization",
+    unit: "%",
+    points: scopedSamples.map((sample, index) => ({
+      x:
+        typeof startedAtMs === "number" && Number.isFinite(startedAtMs)
+          ? Math.max(0, sample.epochMs - startedAtMs)
+          : index,
+      y: params.kind === "cpu" ? sample.cpuUtilPct : deriveGpuUtilForSample(sample),
+    })),
+    xAxisLabel: "Elapsed Time (ms)",
+  };
+}
+
 function buildMessageWindowMetric(params: {
   message: LatencyMessageSummary;
   kind: "cpu" | "gpu";
@@ -616,6 +726,116 @@ function renderMessageUtilCharts(
         ${renderChartSvg(gpuMetric)}
       </article>
     </div>`;
+}
+
+function renderScenarioSection(
+  report: LatencyAggregateReport,
+  hardwareSamples: HardwareTraceSample[],
+): string {
+  if (!report.scenario) {
+    return "";
+  }
+  const scenario = report.scenario;
+  const metrics = [
+    buildScenarioActivityMetric({ report, samples: hardwareSamples, kind: "messages" }),
+    buildScenarioActivityMetric({ report, samples: hardwareSamples, kind: "llm" }),
+    buildScenarioHardwareMetric({ report, samples: hardwareSamples, kind: "cpu" }),
+    buildScenarioHardwareMetric({ report, samples: hardwareSamples, kind: "gpu" }),
+  ];
+  const cards = [
+    ["Duration", formatMs(scenario.durationMs), `${scenario.messageCount} messages`],
+    [
+      "RAG Messages",
+      formatCount(scenario.ragMessageCount),
+      `${formatCount(scenario.llmCallCount)} llm calls`,
+    ],
+    [
+      "Peak Messages",
+      formatCount(scenario.activeMessagesMax),
+      `avg ${formatLevel(scenario.activeMessagesAvg)}`,
+    ],
+    ["Peak LLM", formatCount(scenario.activeLlmMax), `avg ${formatLevel(scenario.activeLlmAvg)}`],
+    ["Peak RAG", formatCount(scenario.activeRagMax), `avg ${formatLevel(scenario.activeRagAvg)}`],
+    [
+      "Scenario GPU Avg",
+      formatPct(scenario.hardware?.gpuUtilAvgPct),
+      `max ${formatPct(scenario.hardware?.gpuUtilMaxPct)}`,
+    ],
+  ]
+    .map(
+      ([title, value, subtitle]) => `
+        <section class="kpi-card">
+          <div class="kpi-title">${escapeHtml(title)}</div>
+          <div class="kpi-value">${escapeHtml(value)}</div>
+          <div class="kpi-subtitle">${escapeHtml(subtitle)}</div>
+        </section>`,
+    )
+    .join("");
+
+  const activityRows: Array<[string, string, string]> = [
+    [
+      "Active Messages",
+      formatLevel(scenario.activeMessagesAvg),
+      formatCount(scenario.activeMessagesMax),
+    ],
+    ["Active T4", formatLevel(scenario.activeT4Avg), formatCount(scenario.activeT4Max)],
+    ["Active RAG", formatLevel(scenario.activeRagAvg), formatCount(scenario.activeRagMax)],
+    ["Active LLM", formatLevel(scenario.activeLlmAvg), formatCount(scenario.activeLlmMax)],
+    [
+      "Active T5 Load",
+      formatLevel(scenario.activeT5LoadAvg),
+      formatCount(scenario.activeT5LoadMax),
+    ],
+    [
+      "Active T5 Prefill",
+      formatLevel(scenario.activeT5PrefillAvg),
+      formatCount(scenario.activeT5PrefillMax),
+    ],
+    [
+      "Active T5 Decode",
+      formatLevel(scenario.activeT5DecodeAvg),
+      formatCount(scenario.activeT5DecodeMax),
+    ],
+  ];
+
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Scenario Timeline</h2>
+      <p class="section-note">This section treats the full capture window as one complex scene and shows aggregate concurrency plus scene-wide CPU/GPU behavior. It is intended for multi-agent, multi-message, and RAG-heavy workloads where message-by-message cards hide the overall pressure pattern.</p>
+      <div class="kpi-grid">${cards}</div>
+      <div class="chart-grid">
+        ${metrics
+          .map(
+            (metric) => `
+              <article class="chart-card" data-chart-id="${escapeHtml(metric.id)}">
+                <div class="chart-header">
+                  <div class="chart-title">${escapeHtml(metric.title)}</div>
+                  <div class="chart-subtitle">${escapeHtml(metric.unit)}</div>
+                </div>
+                <div class="download-row small">
+                  <button class="dl-btn" data-download="chart-svg" data-chart-id="${escapeHtml(metric.id)}">Download chart SVG</button>
+                </div>
+                ${renderChartSvg(metric)}
+              </article>`,
+          )
+          .join("")}
+      </div>
+      <div class="message-hardware-grid">
+        ${renderHardwareWindowCard("Scenario Hardware", scenario.hardware)}
+        <section class="mini-panel">
+          <div class="mini-panel-title">Scenario Stage Activity</div>
+          <table class="compact-table">
+            <thead><tr><th>Metric</th><th>Avg</th><th>Max</th></tr></thead>
+            <tbody>${activityRows
+              .map(
+                ([label, avg, max]) =>
+                  `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(avg)}</td><td>${escapeHtml(max)}</td></tr>`,
+              )
+              .join("")}</tbody>
+          </table>
+        </section>
+      </div>
+    </section>`;
 }
 
 function renderMessageCards(
@@ -1334,6 +1554,7 @@ export function renderLatencyReportHtml(
       ${renderDownloadButtons()}
     </section>
 
+    ${renderScenarioSection(report, hardwareSamples)}
     <section class="panel">
       <h2>Per-message Timeline</h2>
       <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>

@@ -217,18 +217,36 @@ describe("latency-trace-report", () => {
   it("formats a readable report", () => {
     const report = summarizeLatencyRecords(
       parseLatencyTraceJsonl(
-        JSON.stringify({
-          type: "latency.segment",
-          segment: "t2_gateway_enqueue",
-          durationMs: 12,
-          channel: "feishu",
-          accountId: "main",
-          chatId: "oc_chat",
-          messageId: "om_msg_1",
-        }),
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t2_gateway_enqueue",
+            durationMs: 12,
+            startedAtMs: 1_000,
+            endedAtMs: 1_012,
+            channel: "feishu",
+            accountId: "main",
+            chatId: "oc_chat",
+            messageId: "om_msg_1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "completed",
+            durationMs: 100,
+            totalMs: 100,
+            startedAtMs: 1_012,
+            endedAtMs: 1_112,
+            channel: "feishu",
+            accountId: "main",
+            chatId: "oc_chat",
+            messageId: "om_msg_1",
+          }),
+        ].join("\n"),
       ),
     );
     const text = formatLatencyReportText(report);
+    expect(text).toContain("Scenario summary:");
     expect(text).toContain("Per-message Summary:");
     expect(text).toContain("Derived summary:");
     expect(text).toContain("RAG vs No-RAG comparison:");
@@ -236,6 +254,79 @@ describe("latency-trace-report", () => {
     expect(text).toContain("T2=12.0ms");
     expect(text).toContain("t5_llm_call_count");
     expect(text).toContain("t2_gateway_enqueue_ms");
+  });
+
+  it("builds a scenario summary across multiple messages", () => {
+    const report = summarizeLatencyRecords(
+      parseLatencyTraceJsonl(
+        [
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t4_agent_preprocess",
+            durationMs: 40,
+            startedAtMs: 1_000,
+            endedAtMs: 1_040,
+            channel: "cli",
+            accountId: "main",
+            messageId: "msg1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "completed",
+            durationMs: 200,
+            totalMs: 200,
+            startedAtMs: 1_040,
+            endedAtMs: 1_240,
+            channel: "cli",
+            accountId: "main",
+            messageId: "msg1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t4_agent_preprocess",
+            stage: "rag_recall",
+            durationMs: 20,
+            totalTokens: 2,
+            startedAtMs: 1_050,
+            endedAtMs: 1_070,
+            channel: "cli",
+            accountId: "main",
+            messageId: "msg1",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t4_agent_preprocess",
+            durationMs: 30,
+            startedAtMs: 1_120,
+            endedAtMs: 1_150,
+            channel: "cli",
+            accountId: "main",
+            messageId: "msg2",
+          }),
+          JSON.stringify({
+            type: "latency.segment",
+            segment: "t5_llm_inference",
+            stage: "completed",
+            durationMs: 150,
+            totalMs: 150,
+            startedAtMs: 1_150,
+            endedAtMs: 1_300,
+            channel: "cli",
+            accountId: "main",
+            messageId: "msg2",
+          }),
+        ].join("\n"),
+      ),
+    );
+
+    expect(report.scenario?.messageCount).toBe(2);
+    expect(report.scenario?.ragMessageCount).toBe(1);
+    expect(report.scenario?.llmCallCount).toBe(2);
+    expect(report.scenario?.durationMs).toBe(300);
+    expect(report.scenario?.activeMessagesMax).toBe(2);
+    expect(report.scenario?.activeLlmMax).toBe(2);
+    expect(report.scenario?.activeRagMax).toBe(1);
   });
 
   it("correlates hardware samples during the llm window", () => {

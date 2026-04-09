@@ -175,9 +175,34 @@ export type LatencyAggregateReport = {
   recordsScanned: number;
   messages: LatencyMessageSummary[];
   series: Record<string, SeriesSummary>;
+  scenario?: ScenarioSummary;
   comparisons: {
     ragVsNoRag: LatencyComparisonSummary;
   };
+};
+
+export type ScenarioSummary = {
+  startedAtMs?: number;
+  endedAtMs?: number;
+  durationMs?: number;
+  messageCount: number;
+  ragMessageCount: number;
+  llmCallCount: number;
+  activeMessagesAvg?: number;
+  activeMessagesMax?: number;
+  activeT4Avg?: number;
+  activeT4Max?: number;
+  activeRagAvg?: number;
+  activeRagMax?: number;
+  activeLlmAvg?: number;
+  activeLlmMax?: number;
+  activeT5LoadAvg?: number;
+  activeT5LoadMax?: number;
+  activeT5PrefillAvg?: number;
+  activeT5PrefillMax?: number;
+  activeT5DecodeAvg?: number;
+  activeT5DecodeMax?: number;
+  hardware?: HardwareWindowSummary;
 };
 
 function toFiniteNumber(value: unknown): number | undefined {
@@ -670,10 +695,177 @@ export function summarizeLatencyRecords(
     recordsScanned: records.length,
     messages,
     series: buildSeriesSummary(messages),
+    scenario: buildScenarioSummary(messages, hardwareSamples),
     comparisons: {
       ragVsNoRag: buildRagComparison(messages),
     },
   };
+}
+
+function buildScenarioSummary(
+  messages: LatencyMessageSummary[],
+  hardwareSamples?: HardwareTraceSample[],
+): ScenarioSummary | undefined {
+  if (messages.length === 0) {
+    return undefined;
+  }
+  const overallWindows = messages
+    .map((message) =>
+      buildTimeWindow(message.overallWindowStartedAtMs, message.overallWindowEndedAtMs),
+    )
+    .filter((window): window is TimeWindow => window !== undefined);
+  if (overallWindows.length === 0) {
+    return {
+      messageCount: messages.length,
+      ragMessageCount: messages.filter((message) => message.ragUsed).length,
+      llmCallCount: messages.reduce((sum, message) => sum + (message.t5LlmCallCount ?? 0), 0),
+    };
+  }
+  const startedAtMs = Math.min(...overallWindows.map((window) => window.startedAtMs));
+  const endedAtMs = Math.max(...overallWindows.map((window) => window.endedAtMs));
+  const scenarioWindow = buildTimeWindow(startedAtMs, endedAtMs);
+  if (!scenarioWindow) {
+    return undefined;
+  }
+
+  const t4Windows = messages
+    .map((message) => buildTimeWindow(message.t4WindowStartedAtMs, message.t4WindowEndedAtMs))
+    .filter((window): window is TimeWindow => window !== undefined);
+  const ragWindows = messages
+    .map((message) => buildTimeWindow(message.ragWindowStartedAtMs, message.ragWindowEndedAtMs))
+    .filter((window): window is TimeWindow => window !== undefined);
+  const llmWindows = messages
+    .map((message) => buildTimeWindow(message.t5WindowStartedAtMs, message.t5WindowEndedAtMs))
+    .filter((window): window is TimeWindow => window !== undefined);
+  const t5LoadWindows = messages.flatMap((message) => message.t5LoadWindows ?? []);
+  const t5PrefillWindows = messages.flatMap((message) => message.t5PrefillWindows ?? []);
+  const t5DecodeWindows = messages.flatMap((message) => message.t5DecodeWindows ?? []);
+
+  return {
+    startedAtMs: scenarioWindow.startedAtMs,
+    endedAtMs: scenarioWindow.endedAtMs,
+    durationMs: scenarioWindow.endedAtMs - scenarioWindow.startedAtMs,
+    messageCount: messages.length,
+    ragMessageCount: messages.filter((message) => message.ragUsed).length,
+    llmCallCount: messages.reduce((sum, message) => sum + (message.t5LlmCallCount ?? 0), 0),
+    ...prefixScenarioActivity(
+      "activeMessages",
+      summarizeActivityWindows(overallWindows, scenarioWindow),
+    ),
+    ...prefixScenarioActivity("activeT4", summarizeActivityWindows(t4Windows, scenarioWindow)),
+    ...prefixScenarioActivity("activeRag", summarizeActivityWindows(ragWindows, scenarioWindow)),
+    ...prefixScenarioActivity("activeLlm", summarizeActivityWindows(llmWindows, scenarioWindow)),
+    ...prefixScenarioActivity(
+      "activeT5Load",
+      summarizeActivityWindows(t5LoadWindows, scenarioWindow),
+    ),
+    ...prefixScenarioActivity(
+      "activeT5Prefill",
+      summarizeActivityWindows(t5PrefillWindows, scenarioWindow),
+    ),
+    ...prefixScenarioActivity(
+      "activeT5Decode",
+      summarizeActivityWindows(t5DecodeWindows, scenarioWindow),
+    ),
+    hardware:
+      hardwareSamples && hardwareSamples.length > 0
+        ? summarizeHardwareWindow(
+            hardwareSamples,
+            scenarioWindow.startedAtMs,
+            scenarioWindow.endedAtMs,
+          )
+        : undefined,
+  };
+}
+
+function buildTimeWindow(
+  startedAtMs: number | undefined,
+  endedAtMs: number | undefined,
+): TimeWindow | undefined {
+  if (
+    typeof startedAtMs !== "number" ||
+    !Number.isFinite(startedAtMs) ||
+    typeof endedAtMs !== "number" ||
+    !Number.isFinite(endedAtMs) ||
+    endedAtMs <= startedAtMs
+  ) {
+    return undefined;
+  }
+  return { startedAtMs, endedAtMs };
+}
+
+function summarizeActivityWindows(
+  windows: TimeWindow[],
+  scenarioWindow: TimeWindow,
+): { avg?: number; max?: number } {
+  if (windows.length === 0) {
+    return {};
+  }
+  const events = new Map<number, number>();
+  for (const window of windows) {
+    const startedAtMs = Math.max(window.startedAtMs, scenarioWindow.startedAtMs);
+    const endedAtMs = Math.min(window.endedAtMs, scenarioWindow.endedAtMs);
+    if (endedAtMs <= startedAtMs) {
+      continue;
+    }
+    events.set(startedAtMs, (events.get(startedAtMs) ?? 0) + 1);
+    events.set(endedAtMs, (events.get(endedAtMs) ?? 0) - 1);
+  }
+  if (events.size === 0) {
+    return {};
+  }
+  const sorted = [...events.entries()].toSorted((left, right) => left[0] - right[0]);
+  const totalDurationMs = scenarioWindow.endedAtMs - scenarioWindow.startedAtMs;
+  let activeCount = 0;
+  let previousTime = scenarioWindow.startedAtMs;
+  let area = 0;
+  let max = 0;
+
+  for (const [time, delta] of sorted) {
+    if (time > previousTime) {
+      area += activeCount * (time - previousTime);
+      previousTime = time;
+    }
+    activeCount += delta;
+    if (activeCount > max) {
+      max = activeCount;
+    }
+  }
+  if (scenarioWindow.endedAtMs > previousTime) {
+    area += activeCount * (scenarioWindow.endedAtMs - previousTime);
+  }
+  return {
+    avg: totalDurationMs > 0 ? area / totalDurationMs : undefined,
+    max,
+  };
+}
+
+function prefixScenarioActivity(
+  prefix: keyof Pick<
+    ScenarioSummary,
+    | "activeMessagesAvg"
+    | "activeMessagesMax"
+    | "activeT4Avg"
+    | "activeT4Max"
+    | "activeRagAvg"
+    | "activeRagMax"
+    | "activeLlmAvg"
+    | "activeLlmMax"
+    | "activeT5LoadAvg"
+    | "activeT5LoadMax"
+    | "activeT5PrefillAvg"
+    | "activeT5PrefillMax"
+    | "activeT5DecodeAvg"
+    | "activeT5DecodeMax"
+  > extends never
+    ? never
+    : string,
+  summary: { avg?: number; max?: number },
+): Partial<ScenarioSummary> {
+  return {
+    [`${prefix}Avg`]: summary.avg,
+    [`${prefix}Max`]: summary.max,
+  } as Partial<ScenarioSummary>;
 }
 
 function correlateHardwareSamples(
@@ -1289,6 +1481,13 @@ function formatCount(value: number | undefined): string {
   return String(Math.round(value));
 }
 
+function formatLevel(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "-";
+  }
+  return value.toFixed(1);
+}
+
 function formatPct(value: number | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     return "-";
@@ -1306,6 +1505,32 @@ function formatWatts(value: number | undefined): string {
 export function formatLatencyReportText(report: LatencyAggregateReport): string {
   const lines: string[] = [];
   lines.push(`recordsScanned=${report.recordsScanned} messages=${report.messages.length}`);
+  if (report.scenario) {
+    lines.push("");
+    lines.push("Scenario summary:");
+    lines.push(
+      [
+        `duration=${formatMs(report.scenario.durationMs)}`,
+        `messages=${report.scenario.messageCount}`,
+        `ragMessages=${report.scenario.ragMessageCount}`,
+        `llmCalls=${report.scenario.llmCallCount}`,
+        `active.messages.avg/max=${formatLevel(report.scenario.activeMessagesAvg)}/${formatCount(report.scenario.activeMessagesMax)}`,
+        `active.t4.avg/max=${formatLevel(report.scenario.activeT4Avg)}/${formatCount(report.scenario.activeT4Max)}`,
+        `active.rag.avg/max=${formatLevel(report.scenario.activeRagAvg)}/${formatCount(report.scenario.activeRagMax)}`,
+        `active.llm.avg/max=${formatLevel(report.scenario.activeLlmAvg)}/${formatCount(report.scenario.activeLlmMax)}`,
+        `active.t5.load.avg/max=${formatLevel(report.scenario.activeT5LoadAvg)}/${formatCount(report.scenario.activeT5LoadMax)}`,
+        `active.t5.prefill.avg/max=${formatLevel(report.scenario.activeT5PrefillAvg)}/${formatCount(report.scenario.activeT5PrefillMax)}`,
+        `active.t5.decode.avg/max=${formatLevel(report.scenario.activeT5DecodeAvg)}/${formatCount(report.scenario.activeT5DecodeMax)}`,
+        `scenario.hw.samples=${formatCount(report.scenario.hardware?.sampleCount)}`,
+        `scenario.hw.cpu.avg/max=${formatPct(report.scenario.hardware?.cpuUtilAvgPct)}/${formatPct(report.scenario.hardware?.cpuUtilMaxPct)}`,
+        `scenario.hw.mem.avg/max=${formatPct(report.scenario.hardware?.memUtilAvgPct)}/${formatPct(report.scenario.hardware?.memUtilMaxPct)}`,
+        `scenario.hw.gpu.avg/max=${formatPct(report.scenario.hardware?.gpuUtilAvgPct)}/${formatPct(report.scenario.hardware?.gpuUtilMaxPct)}`,
+        `scenario.hw.gpuMem.avg/max=${formatPct(report.scenario.hardware?.gpuMemUtilAvgPct)}/${formatPct(report.scenario.hardware?.gpuMemUtilMaxPct)}`,
+        `scenario.hw.gpuPower.avg/max=${formatWatts(report.scenario.hardware?.gpuPowerAvgW)}/${formatWatts(report.scenario.hardware?.gpuPowerMaxW)}`,
+        `scenario.compute=${formatPlacement(report.scenario.hardware?.computePlacement)}`,
+      ].join(" "),
+    );
+  }
   lines.push("");
   lines.push("Per-message Summary:");
   for (const message of report.messages) {
