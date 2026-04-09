@@ -952,6 +952,8 @@ function renderScenarioMessageGantt(report: LatencyAggregateReport): string {
   ) {
     return "";
   }
+  const scenarioStartedAtMs = scenario.startedAtMs;
+  const scenarioEndedAtMs = scenario.endedAtMs;
   const width = 1160;
   const laneHeight = 32;
   const laneGap = 14;
@@ -960,14 +962,14 @@ function renderScenarioMessageGantt(report: LatencyAggregateReport): string {
   const paddingTop = 24;
   const paddingBottom = 34;
   const timelineWidth = width - paddingLeft - paddingRight;
-  const totalMs = scenario.endedAtMs - scenario.startedAtMs;
+  const totalMs = scenarioEndedAtMs - scenarioStartedAtMs;
   const height =
     paddingTop +
     paddingBottom +
     report.messages.length * laneHeight +
     Math.max(0, report.messages.length - 1) * laneGap;
   const scaleX = (ts: number) =>
-    paddingLeft + ((ts - scenario.startedAtMs) / totalMs) * timelineWidth;
+    paddingLeft + ((ts - scenarioStartedAtMs) / totalMs) * timelineWidth;
   const ticks = 6;
   const gridLines = Array.from({ length: ticks + 1 }, (_, index) => {
     const ratio = index / ticks;
@@ -1010,6 +1012,80 @@ function renderScenarioMessageGantt(report: LatencyAggregateReport): string {
           .join("")}
         ${rows}
         <text x="${width / 2}" y="16" text-anchor="middle" class="chart-overlay-title">Scenario Message Gantt</text>
+      </svg>
+    </section>`;
+}
+
+function renderScenarioCpuGpuOverlay(
+  report: LatencyAggregateReport,
+  hardwareSamples: HardwareTraceSample[],
+): string {
+  const scenario = report.scenario;
+  if (
+    !scenario ||
+    typeof scenario.startedAtMs !== "number" ||
+    !Number.isFinite(scenario.startedAtMs) ||
+    typeof scenario.endedAtMs !== "number" ||
+    !Number.isFinite(scenario.endedAtMs)
+  ) {
+    return "";
+  }
+  const samples = filterSamplesForWindow(hardwareSamples, scenario.startedAtMs, scenario.endedAtMs);
+  if (samples.length === 0) {
+    return "";
+  }
+  const width = 1160;
+  const height = 260;
+  const paddingLeft = 90;
+  const paddingRight = 28;
+  const paddingTop = 42;
+  const paddingBottom = 42;
+  const scenarioStartedAtMs = scenario.startedAtMs;
+  const totalMs = Math.max(1, scenario.endedAtMs - scenarioStartedAtMs);
+  const pointsToPolyline = (values: number[]) =>
+    values
+      .map((value, index) => {
+        const sample = samples[index];
+        const x =
+          paddingLeft +
+          ((sample.epochMs - scenarioStartedAtMs) / totalMs) * (width - paddingLeft - paddingRight);
+        const y =
+          height -
+          paddingBottom -
+          (Math.max(0, Math.min(100, value)) / 100) * (height - paddingTop - paddingBottom);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  const cpuValues = samples.map((sample) => sample.cpuUtilPct ?? 0);
+  const gpuValues = samples.map((sample) => deriveGpuUtilForSample(sample) ?? 0);
+  const cpuPolyline = pointsToPolyline(cpuValues);
+  const gpuPolyline = pointsToPolyline(gpuValues);
+  const avgCpu = cpuValues.reduce((sum, value) => sum + value, 0) / Math.max(1, cpuValues.length);
+  const avgGpu = gpuValues.reduce((sum, value) => sum + value, 0) / Math.max(1, gpuValues.length);
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Scenario CPU/GPU Overlay</h2>
+      <p class="section-note">CPU and GPU utilization on the same scene-wide time axis as the gantt, so you can visually match software stage overlaps with hardware pressure changes.</p>
+      <div class="download-row small">
+        <button class="dl-btn" data-download="scenario-cpu-gpu-svg">Download scenario CPU/GPU SVG</button>
+      </div>
+      <svg class="gantt-svg" data-scenario-overlay="true" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="Scenario CPU GPU Overlay">
+        <rect width="${width}" height="${height}" fill="#ffffff" />
+        <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
+        <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${height - paddingBottom}" class="axis" />
+        <line x1="${paddingLeft}" y1="${height - paddingBottom - (avgCpu / 100) * (height - paddingTop - paddingBottom)}" x2="${width - paddingRight}" y2="${height - paddingBottom - (avgCpu / 100) * (height - paddingTop - paddingBottom)}" class="guide avg-guide" />
+        <line x1="${paddingLeft}" y1="${height - paddingBottom - (avgGpu / 100) * (height - paddingTop - paddingBottom)}" x2="${width - paddingRight}" y2="${height - paddingBottom - (avgGpu / 100) * (height - paddingTop - paddingBottom)}" class="guide stage-guide" />
+        <polyline points="${cpuPolyline}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <polyline points="${gpuPolyline}" fill="none" stroke="#f97316" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">Scenario CPU/GPU Utilization</text>
+        <text x="${width / 2}" y="34" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`CPU avg: ${formatPct(avgCpu)} | GPU avg: ${formatPct(avgGpu)}`)}</text>
+        <text x="${paddingLeft}" y="${height - 10}" text-anchor="start" class="axis-label">0 ms</text>
+        <text x="${width - paddingRight}" y="${height - 10}" text-anchor="end" class="axis-label">${escapeHtml(`${Math.round(totalMs)} ms`)}</text>
+        <text x="22" y="${height / 2}" text-anchor="middle" transform="rotate(-90 22 ${height / 2})" class="axis-label">Utilization (%)</text>
+        <text x="${width - 180}" y="${paddingTop + 10}" class="axis-label">CPU</text>
+        <line x1="${width - 230}" y1="${paddingTop + 6}" x2="${width - 190}" y2="${paddingTop + 6}" stroke="#0f766e" stroke-width="3" />
+        <text x="${width - 180}" y="${paddingTop + 28}" class="axis-label">GPU</text>
+        <line x1="${width - 230}" y1="${paddingTop + 24}" x2="${width - 190}" y2="${paddingTop + 24}" stroke="#f97316" stroke-width="3" />
       </svg>
     </section>`;
 }
@@ -1734,6 +1810,7 @@ export function renderLatencyReportHtml(
 
     ${renderScenarioSection(report, hardwareSamples)}
     ${renderScenarioMessageGantt(report)}
+    ${renderScenarioCpuGpuOverlay(report, hardwareSamples)}
     <section class="panel">
       <h2>Per-message Timeline</h2>
       <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>
@@ -1892,6 +1969,13 @@ export function renderLatencyReportHtml(
           const svg = document.querySelector('[data-scenario-gantt="true"]');
           if (svg) {
             downloadSvg("scenario-message-gantt.svg", svg.outerHTML);
+          }
+          return;
+        }
+        if (type === "scenario-cpu-gpu-svg") {
+          const svg = document.querySelector('[data-scenario-overlay="true"]');
+          if (svg) {
+            downloadSvg("scenario-cpu-gpu-overlay.svg", svg.outerHTML);
           }
           return;
         }
