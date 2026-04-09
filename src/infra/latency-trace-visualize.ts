@@ -1036,12 +1036,16 @@ function renderScenarioCpuGpuOverlay(
   }
   const width = 1160;
   const height = 260;
-  const paddingLeft = 90;
+  const paddingLeft = 100;
   const paddingRight = 28;
   const paddingTop = 42;
   const paddingBottom = 42;
   const scenarioStartedAtMs = scenario.startedAtMs;
   const totalMs = Math.max(1, scenario.endedAtMs - scenarioStartedAtMs);
+  const yForPct = (value: number) =>
+    height -
+    paddingBottom -
+    (Math.max(0, Math.min(100, value)) / 100) * (height - paddingTop - paddingBottom);
   const pointsToPolyline = (values: number[]) =>
     values
       .map((value, index) => {
@@ -1049,10 +1053,7 @@ function renderScenarioCpuGpuOverlay(
         const x =
           paddingLeft +
           ((sample.epochMs - scenarioStartedAtMs) / totalMs) * (width - paddingLeft - paddingRight);
-        const y =
-          height -
-          paddingBottom -
-          (Math.max(0, Math.min(100, value)) / 100) * (height - paddingTop - paddingBottom);
+        const y = yForPct(value);
         return `${x.toFixed(1)},${y.toFixed(1)}`;
       })
       .join(" ");
@@ -1062,6 +1063,26 @@ function renderScenarioCpuGpuOverlay(
   const gpuPolyline = pointsToPolyline(gpuValues);
   const avgCpu = cpuValues.reduce((sum, value) => sum + value, 0) / Math.max(1, cpuValues.length);
   const avgGpu = gpuValues.reduce((sum, value) => sum + value, 0) / Math.max(1, gpuValues.length);
+  const maxCpu = Math.max(...cpuValues);
+  const maxGpu = Math.max(...gpuValues);
+  const axisLabels = [
+    { text: `CPU max ${formatPct(maxCpu)}`, color: "#0f766e", y: yForPct(maxCpu) },
+    { text: `CPU avg ${formatPct(avgCpu)}`, color: "#0f766e", y: yForPct(avgCpu) },
+    { text: `GPU max ${formatPct(maxGpu)}`, color: "#f97316", y: yForPct(maxGpu) },
+    { text: `GPU avg ${formatPct(avgGpu)}`, color: "#f97316", y: yForPct(avgGpu) },
+  ]
+    .toSorted((left, right) => left.y - right.y)
+    .map((entry, index, items) => {
+      const previous = items[index - 1];
+      return {
+        ...entry,
+        y: previous && Math.abs(entry.y - previous.y) < 12 ? previous.y + 12 : entry.y,
+      };
+    });
+  const legendBoxX = width - 188;
+  const legendBoxY = 8;
+  const legendBoxWidth = 170;
+  const legendBoxHeight = 46;
   return `
     <section class="panel" style="margin-top:20px">
       <h2>Scenario CPU/GPU Overlay</h2>
@@ -1073,19 +1094,29 @@ function renderScenarioCpuGpuOverlay(
         <rect width="${width}" height="${height}" fill="#ffffff" />
         <line x1="${paddingLeft}" y1="${height - paddingBottom}" x2="${width - paddingRight}" y2="${height - paddingBottom}" class="axis" />
         <line x1="${paddingLeft}" y1="${paddingTop}" x2="${paddingLeft}" y2="${height - paddingBottom}" class="axis" />
-        <line x1="${paddingLeft}" y1="${height - paddingBottom - (avgCpu / 100) * (height - paddingTop - paddingBottom)}" x2="${width - paddingRight}" y2="${height - paddingBottom - (avgCpu / 100) * (height - paddingTop - paddingBottom)}" class="guide avg-guide" />
-        <line x1="${paddingLeft}" y1="${height - paddingBottom - (avgGpu / 100) * (height - paddingTop - paddingBottom)}" x2="${width - paddingRight}" y2="${height - paddingBottom - (avgGpu / 100) * (height - paddingTop - paddingBottom)}" class="guide stage-guide" />
+        <line x1="${paddingLeft}" y1="${yForPct(avgCpu)}" x2="${width - paddingRight}" y2="${yForPct(avgCpu)}" class="guide avg-guide" />
+        <line x1="${paddingLeft}" y1="${yForPct(avgGpu)}" x2="${width - paddingRight}" y2="${yForPct(avgGpu)}" class="guide stage-guide" />
+        <line x1="${paddingLeft}" y1="${yForPct(maxCpu)}" x2="${width - paddingRight}" y2="${yForPct(maxCpu)}" class="guide avg-guide" stroke-opacity="0.45" />
+        <line x1="${paddingLeft}" y1="${yForPct(maxGpu)}" x2="${width - paddingRight}" y2="${yForPct(maxGpu)}" class="guide stage-guide" stroke-opacity="0.45" />
         <polyline points="${cpuPolyline}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <polyline points="${gpuPolyline}" fill="none" stroke="#f97316" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">Scenario CPU/GPU Utilization</text>
         <text x="${width / 2}" y="34" text-anchor="middle" class="chart-overlay-subtitle">${escapeHtml(`CPU avg: ${formatPct(avgCpu)} | GPU avg: ${formatPct(avgGpu)}`)}</text>
         <text x="${paddingLeft}" y="${height - 10}" text-anchor="start" class="axis-label">0 ms</text>
         <text x="${width - paddingRight}" y="${height - 10}" text-anchor="end" class="axis-label">${escapeHtml(`${Math.round(totalMs)} ms`)}</text>
-        <text x="22" y="${height / 2}" text-anchor="middle" transform="rotate(-90 22 ${height / 2})" class="axis-label">Utilization (%)</text>
-        <text x="${width - 180}" y="${paddingTop + 10}" class="axis-label">CPU</text>
-        <line x1="${width - 230}" y1="${paddingTop + 6}" x2="${width - 190}" y2="${paddingTop + 6}" stroke="#0f766e" stroke-width="3" />
-        <text x="${width - 180}" y="${paddingTop + 28}" class="axis-label">GPU</text>
-        <line x1="${width - 230}" y1="${paddingTop + 24}" x2="${width - 190}" y2="${paddingTop + 24}" stroke="#f97316" stroke-width="3" />
+        <text x="24" y="${height / 2}" text-anchor="middle" transform="rotate(-90 24 ${height / 2})" class="axis-label">Utilization (%)</text>
+        ${axisLabels
+          .map(
+            (entry) => `
+              <line x1="${paddingLeft - 6}" y1="${entry.y.toFixed(1)}" x2="${paddingLeft}" y2="${entry.y.toFixed(1)}" class="tick" />
+              <text x="${paddingLeft - 10}" y="${(entry.y + 4).toFixed(1)}" text-anchor="end" class="axis-label" fill="${entry.color}">${escapeHtml(entry.text)}</text>`,
+          )
+          .join("")}
+        <rect x="${legendBoxX}" y="${legendBoxY}" width="${legendBoxWidth}" height="${legendBoxHeight}" rx="8" ry="8" fill="rgba(255,255,255,0.92)" stroke="rgba(15,23,42,0.12)" />
+        <line x1="${legendBoxX + 10}" y1="${legendBoxY + 16}" x2="${legendBoxX + 42}" y2="${legendBoxY + 16}" stroke="#0f766e" stroke-width="3" />
+        <text x="${legendBoxX + 50}" y="${legendBoxY + 20}" class="axis-label">CPU</text>
+        <line x1="${legendBoxX + 10}" y1="${legendBoxY + 32}" x2="${legendBoxX + 42}" y2="${legendBoxY + 32}" stroke="#f97316" stroke-width="3" />
+        <text x="${legendBoxX + 50}" y="${legendBoxY + 36}" class="axis-label">GPU</text>
       </svg>
     </section>`;
 }
