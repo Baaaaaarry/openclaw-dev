@@ -1111,8 +1111,8 @@ function renderScenarioCpuGpuOverlay(
         ${axisLabels
           .map(
             (entry) => `
-              <line x1="${paddingLeft - 6}" y1="${entry.y.toFixed(1)}" x2="${paddingLeft}" y2="${entry.y.toFixed(1)}" class="tick" />
-              <text x="${paddingLeft - 10}" y="${(entry.y + 4).toFixed(1)}" text-anchor="end" class="axis-label" fill="${entry.color}">${escapeHtml(entry.text)}</text>`,
+              <line x1="${paddingLeft - 6}" y1="${entry.y.toFixed(1)}" x2="${paddingLeft}" y2="${entry.y.toFixed(1)}" class="tick" style="stroke:${entry.color};stroke-opacity:0.85" />
+              <text x="${paddingLeft - 10}" y="${(entry.y + 4).toFixed(1)}" text-anchor="end" class="axis-label" style="fill:${entry.color};font-weight:600">${escapeHtml(entry.text)}</text>`,
           )
           .join("")}
         <rect x="${legendBoxX}" y="${legendBoxY}" width="${legendBoxWidth}" height="${legendBoxHeight}" rx="8" ry="8" fill="rgba(255,255,255,0.92)" stroke="rgba(15,23,42,0.12)" />
