@@ -6,6 +6,36 @@ describe("latency-trace-visualize", () => {
   it("renders an html dashboard", () => {
     const report: LatencyAggregateReport = {
       recordsScanned: 4,
+      scenario: {
+        startedAtMs: 1_000,
+        endedAtMs: 1_800,
+        durationMs: 800,
+        messageCount: 1,
+        ragMessageCount: 1,
+        llmCallCount: 1,
+        activeMessagesAvg: 1,
+        activeMessagesMax: 1,
+        activeT4Avg: 1,
+        activeT4Max: 1,
+        activeRagAvg: 0.2,
+        activeRagMax: 1,
+        activeLlmAvg: 0.6,
+        activeLlmMax: 1,
+        activeT5LoadAvg: 0.1,
+        activeT5LoadMax: 1,
+        activeT5PrefillAvg: 0.2,
+        activeT5PrefillMax: 1,
+        activeT5DecodeAvg: 0.3,
+        activeT5DecodeMax: 1,
+        hardware: {
+          sampleCount: 4,
+          cpuUtilAvgPct: 31.75,
+          cpuUtilMaxPct: 35,
+          gpuUtilAvgPct: 85,
+          gpuUtilMaxPct: 88,
+          computePlacement: "gpu-biased",
+        },
+      },
       messages: [
         {
           key: "feishu|agent|msg1",
@@ -239,6 +269,12 @@ describe("latency-trace-visualize", () => {
     });
     expect(html).toContain("<!doctype html>");
     expect(html).toContain("OpenClaw Latency Dashboard");
+    expect(html).toContain("Scenario Timeline");
+    expect(html).toContain("Scenario Message Concurrency");
+    expect(html).toContain("Scenario LLM Concurrency");
+    expect(html).toContain("Scenario CPU Utilization");
+    expect(html).toContain("Scenario GPU Utilization");
+    expect(html).toContain("Scenario Stage Activity");
     expect(html).toContain("Per-message Timeline");
     expect(html).toContain("msg1");
     expect(html).toContain("CPU Utilization (T1-T6 Interval)");
