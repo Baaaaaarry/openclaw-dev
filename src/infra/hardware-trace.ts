@@ -13,6 +13,21 @@ const execFileAsync = promisify(execFile);
 const writers = new Map<string, QueuedFileWriter>();
 const DEFAULT_HARDWARE_TRACE_FILENAME = "hardware-trace.jsonl";
 const DEFAULT_INTERVAL_MS = 1000;
+const NOISE_THREAD_COMMANDS = new Set(["ps", "nvidia-smi", "bash", "zsh", "sh", "timeout", "tee"]);
+const PREFERRED_THREAD_HINTS = [
+  "openclaw",
+  "node",
+  "ollama",
+  "llama",
+  "llama-server",
+  "llama.cpp",
+  "python",
+  "vllm",
+  "sglang",
+  "triton",
+  "ray",
+  "uvicorn",
+];
 
 type CpuSnapshot = {
   idle: number;
@@ -308,6 +323,24 @@ function truncateText(value: string | undefined, maxChars: number): string | und
   return value.length > maxChars ? `${value.slice(0, Math.max(0, maxChars - 1))}…` : value;
 }
 
+function isNoiseThreadSample(sample: HardwareThreadSample): boolean {
+  const command = sample.command?.toLowerCase().trim() ?? "";
+  const args = sample.args?.toLowerCase() ?? "";
+  if (NOISE_THREAD_COMMANDS.has(command)) {
+    return true;
+  }
+  return (
+    args.includes("nvidia-smi --query-gpu") ||
+    args.includes("ps -elo") ||
+    args.includes("ps -eLo".toLowerCase())
+  );
+}
+
+function isPreferredRuntimeThread(sample: HardwareThreadSample): boolean {
+  const haystack = `${sample.command ?? ""} ${sample.args ?? ""}`.toLowerCase();
+  return PREFERRED_THREAD_HINTS.some((hint) => haystack.includes(hint));
+}
+
 function resolveThreadSampleLimit(env: NodeJS.ProcessEnv = process.env): number {
   const parsed = Number(env.OPENCLAW_HARDWARE_TRACE_THREAD_LIMIT);
   if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 64) {
@@ -356,7 +389,13 @@ async function collectTopCpuThreads(
         break;
       }
     }
-    return samples.length > 0 ? samples : undefined;
+    const nonNoise = samples.filter((sample) => !isNoiseThreadSample(sample));
+    const preferred = nonNoise.filter(isPreferredRuntimeThread);
+    const ranked = [
+      ...preferred,
+      ...nonNoise.filter((sample) => !isPreferredRuntimeThread(sample)),
+    ];
+    return ranked.length > 0 ? ranked.slice(0, limit) : undefined;
   } catch {
     return undefined;
   }

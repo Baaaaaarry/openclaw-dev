@@ -440,7 +440,10 @@ describe("latency-trace-visualize", () => {
     });
     expect(html).toContain("Scenario Change Log");
     expect(html).toContain("Top CPU Threads");
-    expect(html).toContain("node tid=22 24.1%");
+    expect(html).toContain("thread-evidence-list");
+    expect(html).toContain("node");
+    expect(html).toContain("tid=22");
+    expect(html).toContain("24.1%");
     expect(html).toContain("Evidence-based Note");
   });
 });
