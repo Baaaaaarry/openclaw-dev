@@ -66,6 +66,8 @@ type MetricSummary = {
   latest?: number;
 };
 
+const NOISE_THREAD_COMMANDS = new Set(["ps", "nvidia-smi", "bash", "zsh", "sh", "timeout", "tee"]);
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -171,11 +173,23 @@ function formatDelta(value: number | undefined): string {
   return `${sign}${value.toFixed(1)} pts`;
 }
 
+function filterRelevantThreads(threads: HardwareThreadSample[]): HardwareThreadSample[] {
+  return threads.filter((thread) => {
+    const command = thread.command?.toLowerCase().trim() ?? "";
+    const args = thread.args?.toLowerCase() ?? "";
+    if (NOISE_THREAD_COMMANDS.has(command)) {
+      return false;
+    }
+    return !args.includes("nvidia-smi --query-gpu") && !args.includes("ps -elo");
+  });
+}
+
 function formatThreadEvidence(threads: HardwareThreadSample[]): string {
-  if (threads.length === 0) {
+  const relevantThreads = filterRelevantThreads(threads);
+  if (relevantThreads.length === 0) {
     return "No thread snapshot";
   }
-  return threads
+  return relevantThreads
     .slice(0, 3)
     .map((thread) => {
       const command = thread.command ?? "unknown";
@@ -184,6 +198,24 @@ function formatThreadEvidence(threads: HardwareThreadSample[]): string {
       return `${command}${tid} ${cpu}`;
     })
     .join(" | ");
+}
+
+function renderThreadEvidenceHtml(threads: HardwareThreadSample[]): string {
+  const relevantThreads = filterRelevantThreads(threads);
+  if (relevantThreads.length === 0) {
+    return `<div class="thread-empty">No relevant thread snapshot</div>`;
+  }
+  return `<div class="thread-evidence-list">${relevantThreads
+    .slice(0, 3)
+    .map((thread) => {
+      const command = escapeHtml(thread.command ?? "unknown");
+      const tid =
+        typeof thread.tid === "number" ? `<span class="thread-tag">tid=${thread.tid}</span>` : "";
+      const cpu = `<span class="thread-tag strong">${escapeHtml(formatPct(thread.cpuPct))}</span>`;
+      const args = thread.args ? `<div class="thread-args">${escapeHtml(thread.args)}</div>` : "";
+      return `<div class="thread-evidence-item"><div class="thread-head"><span class="thread-name">${command}</span>${tid}${cpu}</div>${args}</div>`;
+    })
+    .join("")}</div>`;
 }
 
 function deriveGpuUtilForSample(sample: HardwareTraceSample): number | undefined {
@@ -540,7 +572,7 @@ function buildScenarioChangeEvents(
     ) {
       continue;
     }
-    const topThreads = current.topCpuThreads ?? [];
+    const topThreads = filterRelevantThreads(current.topCpuThreads ?? []);
     const activeStages = findActiveScenarioStages(report.messages, current.epochMs);
     const summary = summarizeScenarioChange({
       activeStages,
@@ -619,7 +651,7 @@ function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
                   <td>${escapeHtml(formatDelta(event.cpuDelta))}</td>
                   <td>${escapeHtml(formatDelta(event.gpuDelta))}</td>
                   <td>${escapeHtml(event.stageText)}</td>
-                  <td>${escapeHtml(event.threadEvidenceText)}</td>
+                  <td>${renderThreadEvidenceHtml(event.topThreads)}</td>
                   <td>${escapeHtml(event.summary)}</td>
                 </tr>`,
             )
@@ -2189,6 +2221,14 @@ export function renderLatencyReportHtml(
       color: #ffffff;
       font: 700 12px/1 "Helvetica Neue", Arial, sans-serif;
     }
+    .thread-evidence-list { display: grid; gap: 8px; min-width: 280px; }
+    .thread-evidence-item { padding: 8px 10px; border-radius: 12px; background: rgba(15,23,42,0.04); border: 1px solid rgba(148,163,184,0.18); }
+    .thread-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .thread-name { font-weight: 700; color: #111827; }
+    .thread-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; background: rgba(148,163,184,0.18); color: #334155; font: 600 11px/1.5 "Helvetica Neue", Arial, sans-serif; }
+    .thread-tag.strong { background: rgba(15,118,110,0.12); color: #0f766e; }
+    .thread-args { margin-top: 4px; color: #6b7280; font-size: 11px; word-break: break-all; }
+    .thread-empty { color: #6b7280; font-size: 12px; }
     .chart-empty { display: grid; place-items: center; height: 220px; border-radius: 12px; background: rgba(148,163,184,0.12); color: var(--muted); border: 1px dashed rgba(148,163,184,0.28); }
     .download-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 0; }
     .download-row.small { margin: 0 0 12px; }
