@@ -517,6 +517,11 @@ function buildScenarioChangeEvents(
     scenario.startedAtMs,
     scenario.endedAtMs,
   ).toSorted((left, right) => left.epochMs - right.epochMs);
+  const strongCpuDeltaThreshold = 20;
+  const strongGpuDeltaThreshold = 28;
+  const strongCombinedThreshold = 34;
+  const collapseWindowMs = 2_500;
+  const maxRenderedEvents = 6;
   const rawEvents: Array<Omit<ScenarioChangeEvent, "index">> = [];
   for (let index = 1; index < samples.length; index += 1) {
     const previous = samples[index - 1];
@@ -527,7 +532,12 @@ function buildScenarioChangeEvents(
     const currentGpu = deriveGpuUtilForSample(current) ?? 0;
     const cpuDelta = currentCpu - previousCpu;
     const gpuDelta = currentGpu - previousGpu;
-    if (Math.abs(cpuDelta) < 12 && Math.abs(gpuDelta) < 18) {
+    const score = Math.max(Math.abs(cpuDelta), Math.abs(gpuDelta));
+    if (
+      Math.abs(cpuDelta) < strongCpuDeltaThreshold &&
+      Math.abs(gpuDelta) < strongGpuDeltaThreshold &&
+      score < strongCombinedThreshold
+    ) {
       continue;
     }
     const topThreads = current.topCpuThreads ?? [];
@@ -559,7 +569,7 @@ function buildScenarioChangeEvents(
     const previousScore = previous
       ? Math.max(Math.abs(previous.cpuDelta ?? 0), Math.abs(previous.gpuDelta ?? 0))
       : -1;
-    if (previous && event.epochMs - previous.epochMs <= 1600) {
+    if (previous && event.epochMs - previous.epochMs <= collapseWindowMs) {
       if (score > previousScore) {
         merged[merged.length - 1] = event;
       }
@@ -567,7 +577,16 @@ function buildScenarioChangeEvents(
     }
     merged.push(event);
   }
-  return merged.map((event, index) => ({ ...event, index: index + 1 }));
+  const strongest = merged
+    .map((event) => ({
+      event,
+      score: Math.max(Math.abs(event.cpuDelta ?? 0), Math.abs(event.gpuDelta ?? 0)),
+    }))
+    .toSorted((left, right) => right.score - left.score)
+    .slice(0, maxRenderedEvents)
+    .map((entry) => entry.event)
+    .toSorted((left, right) => left.epochMs - right.epochMs);
+  return strongest.map((event, index) => ({ ...event, index: index + 1 }));
 }
 
 function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
