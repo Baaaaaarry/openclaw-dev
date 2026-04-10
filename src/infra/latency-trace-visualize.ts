@@ -39,25 +39,17 @@ type TimeWindow = {
   endedAtMs: number;
 };
 
-type ActiveScenarioStage = {
-  messageLabel: string;
-  stageLabel: string;
-  stageKind: "t1" | "t2" | "t3" | "t4" | "rag" | "load" | "prefill" | "decode" | "t6";
-};
-
-type ScenarioChangeEvent = {
-  index: number;
-  epochMs: number;
-  elapsedMs: number;
-  cpuValue?: number;
-  gpuValue?: number;
-  cpuDelta?: number;
-  gpuDelta?: number;
-  activeStages: ActiveScenarioStage[];
-  stageText: string;
-  topThreads: HardwareThreadSample[];
-  threadEvidenceText: string;
-  summary: string;
+type StageLoadSummary = {
+  label: string;
+  count: number;
+  avgDurationMs?: number;
+  maxDurationMs?: number;
+  summary?: HardwareWindowSummary;
+  primaryLoad: string;
+  cpuOwnerEvidence: string;
+  bandwidthDemand: string;
+  boundType: string;
+  impact: string;
 };
 
 type MetricSummary = {
@@ -165,14 +157,6 @@ function formatUnit(unit: string, value: number | undefined): string {
   }
 }
 
-function formatDelta(value: number | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return "N/A";
-  }
-  const sign = value > 0 ? "+" : "";
-  return `${sign}${value.toFixed(1)} pts`;
-}
-
 function filterRelevantThreads(threads: HardwareThreadSample[]): HardwareThreadSample[] {
   return threads.filter((thread) => {
     const command = thread.command?.toLowerCase().trim() ?? "";
@@ -184,38 +168,487 @@ function filterRelevantThreads(threads: HardwareThreadSample[]): HardwareThreadS
   });
 }
 
-function formatThreadEvidence(threads: HardwareThreadSample[]): string {
-  const relevantThreads = filterRelevantThreads(threads);
-  if (relevantThreads.length === 0) {
-    return "No thread snapshot";
+function average(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
   }
-  return relevantThreads
-    .slice(0, 3)
-    .map((thread) => {
-      const command = thread.command ?? "unknown";
-      const cpu = formatPct(thread.cpuPct);
-      const tid = typeof thread.tid === "number" ? ` tid=${thread.tid}` : "";
-      return `${command}${tid} ${cpu}`;
-    })
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function maxMaybe(values: number[]): number | undefined {
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
+function weightedAverage(values: Array<{ value?: number; weight: number }>): number | undefined {
+  let numerator = 0;
+  let denominator = 0;
+  for (const entry of values) {
+    if (
+      typeof entry.value !== "number" ||
+      !Number.isFinite(entry.value) ||
+      !(entry.weight > 0) ||
+      !Number.isFinite(entry.weight)
+    ) {
+      continue;
+    }
+    numerator += entry.value * entry.weight;
+    denominator += entry.weight;
+  }
+  return denominator > 0 ? numerator / denominator : undefined;
+}
+
+function mergeHardwareSummaries(
+  summaries: HardwareWindowSummary[],
+): HardwareWindowSummary | undefined {
+  if (summaries.length === 0) {
+    return undefined;
+  }
+  const totalSamples = summaries.reduce(
+    (sum, summary) => sum + Math.max(0, summary.sampleCount ?? 0),
+    0,
+  );
+  const merged: HardwareWindowSummary = {
+    sampleCount: totalSamples,
+    cpuUtilAvgPct: weightedAverage(
+      summaries.map((summary) => ({ value: summary.cpuUtilAvgPct, weight: summary.sampleCount })),
+    ),
+    cpuUtilMaxPct: maxMaybe(
+      summaries
+        .map((summary) => summary.cpuUtilMaxPct)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    memUtilAvgPct: weightedAverage(
+      summaries.map((summary) => ({ value: summary.memUtilAvgPct, weight: summary.sampleCount })),
+    ),
+    memUtilMaxPct: maxMaybe(
+      summaries
+        .map((summary) => summary.memUtilMaxPct)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuUtilAvgPct: weightedAverage(
+      summaries.map((summary) => ({ value: summary.gpuUtilAvgPct, weight: summary.sampleCount })),
+    ),
+    gpuUtilMaxPct: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuUtilMaxPct)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuMemUtilAvgPct: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuMemUtilAvgPct,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuMemUtilMaxPct: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuMemUtilMaxPct)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuPowerAvgW: weightedAverage(
+      summaries.map((summary) => ({ value: summary.gpuPowerAvgW, weight: summary.sampleCount })),
+    ),
+    gpuPowerMaxW: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuPowerMaxW)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuMemoryUsedAvgMiB: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuMemoryUsedAvgMiB,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuMemoryUsedMaxMiB: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuMemoryUsedMaxMiB)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuSmClockAvgMHz: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuSmClockAvgMHz,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuSmClockMaxMHz: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuSmClockMaxMHz)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuMemClockAvgMHz: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuMemClockAvgMHz,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuMemClockMaxMHz: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuMemClockMaxMHz)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuMemBandwidthEstimateAvgGBps: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuMemBandwidthEstimateAvgGBps,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuMemBandwidthEstimateMaxGBps: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuMemBandwidthEstimateMaxGBps)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+    gpuMemBandwidthPeakAvgGBps: weightedAverage(
+      summaries.map((summary) => ({
+        value: summary.gpuMemBandwidthPeakAvgGBps,
+        weight: summary.sampleCount,
+      })),
+    ),
+    gpuMemBandwidthPeakMaxGBps: maxMaybe(
+      summaries
+        .map((summary) => summary.gpuMemBandwidthPeakMaxGBps)
+        .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+    ),
+  };
+  merged.computePlacement =
+    merged.gpuUtilAvgPct != null && merged.gpuUtilAvgPct >= 25
+      ? "gpu-biased"
+      : merged.cpuUtilAvgPct != null && merged.cpuUtilAvgPct >= 20
+        ? "cpu-biased"
+        : totalSamples > 0
+          ? "mixed"
+          : "unclear";
+  return merged;
+}
+
+function summarizeHardwareSamplesForStage(
+  samples: HardwareTraceSample[],
+): HardwareWindowSummary | undefined {
+  if (samples.length === 0) {
+    return undefined;
+  }
+  const cpuValues = samples
+    .map((sample) => sample.cpuUtilPct)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const memValues = samples
+    .map((sample) => sample.memUtilPct)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuValues = samples
+    .map((sample) => deriveGpuUtilForSample(sample))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuPowerValues = samples
+    .map((sample) =>
+      maxMaybe(
+        (sample.gpus ?? [])
+          .map((gpu) => gpu.powerDrawW)
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+      ),
+    )
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuBwValues = samples
+    .map((sample) =>
+      maxMaybe(
+        (sample.gpus ?? [])
+          .map((gpu) => gpu.memBandwidthEstimateGBps)
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+      ),
+    )
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const gpuBwPeakValues = samples
+    .map((sample) =>
+      maxMaybe(
+        (sample.gpus ?? [])
+          .map((gpu) => gpu.memBandwidthPeakGBps)
+          .filter((value): value is number => typeof value === "number" && Number.isFinite(value)),
+      ),
+    )
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return mergeHardwareSummaries([
+    {
+      sampleCount: samples.length,
+      cpuUtilAvgPct: average(cpuValues),
+      cpuUtilMaxPct: maxMaybe(cpuValues),
+      memUtilAvgPct: average(memValues),
+      memUtilMaxPct: maxMaybe(memValues),
+      gpuUtilAvgPct: average(gpuValues),
+      gpuUtilMaxPct: maxMaybe(gpuValues),
+      gpuPowerAvgW: average(gpuPowerValues),
+      gpuPowerMaxW: maxMaybe(gpuPowerValues),
+      gpuMemBandwidthEstimateAvgGBps: average(gpuBwValues),
+      gpuMemBandwidthEstimateMaxGBps: maxMaybe(gpuBwValues),
+      gpuMemBandwidthPeakAvgGBps: average(gpuBwPeakValues),
+      gpuMemBandwidthPeakMaxGBps: maxMaybe(gpuBwPeakValues),
+    },
+  ]);
+}
+
+function collectSamplesForWindows(
+  samples: HardwareTraceSample[],
+  windows: TimeWindow[],
+): HardwareTraceSample[] {
+  if (windows.length === 0 || samples.length === 0) {
+    return [];
+  }
+  const selected = new Map<number, HardwareTraceSample>();
+  for (const window of windows) {
+    for (const sample of samples) {
+      if (sample.epochMs >= window.startedAtMs && sample.epochMs <= window.endedAtMs) {
+        selected.set(sample.epochMs, sample);
+      }
+    }
+  }
+  return [...selected.values()].toSorted((left, right) => left.epochMs - right.epochMs);
+}
+
+function normalizeThreadOwner(thread: HardwareThreadSample): string {
+  const haystack = `${thread.command ?? ""} ${thread.args ?? ""}`.toLowerCase();
+  if (haystack.includes("ollama")) {
+    return "ollama";
+  }
+  if (haystack.includes("openclaw")) {
+    return "openclaw";
+  }
+  if (haystack.includes("node")) {
+    return "node";
+  }
+  if (haystack.includes("chrome")) {
+    return "chrome";
+  }
+  if (haystack.includes("python")) {
+    return "python";
+  }
+  return thread.command?.toLowerCase() ?? "unknown";
+}
+
+function summarizeCpuOwnerEvidence(samples: HardwareTraceSample[]): string {
+  const totals = new Map<string, number>();
+  let totalCpu = 0;
+  for (const sample of samples) {
+    for (const thread of filterRelevantThreads(sample.topCpuThreads ?? [])) {
+      const owner = normalizeThreadOwner(thread);
+      const cpu = thread.cpuPct ?? 0;
+      if (!(cpu > 0)) {
+        continue;
+      }
+      totals.set(owner, (totals.get(owner) ?? 0) + cpu);
+      totalCpu += cpu;
+    }
+  }
+  if (totals.size === 0 || !(totalCpu > 0)) {
+    return "No thread evidence";
+  }
+  return [...totals.entries()]
+    .toSorted((left, right) => right[1] - left[1])
+    .slice(0, 2)
+    .map(([owner, cpu]) => `${owner} ${((cpu / totalCpu) * 100).toFixed(0)}%`)
     .join(" | ");
 }
 
-function renderThreadEvidenceHtml(threads: HardwareThreadSample[]): string {
-  const relevantThreads = filterRelevantThreads(threads);
-  if (relevantThreads.length === 0) {
-    return `<div class="thread-empty">No relevant thread snapshot</div>`;
+function classifyPrimaryLoad(summary?: HardwareWindowSummary): string {
+  if (!summary || !summary.sampleCount) {
+    return "N/A";
   }
-  return `<div class="thread-evidence-list">${relevantThreads
-    .slice(0, 3)
-    .map((thread) => {
-      const command = escapeHtml(thread.command ?? "unknown");
-      const tid =
-        typeof thread.tid === "number" ? `<span class="thread-tag">tid=${thread.tid}</span>` : "";
-      const cpu = `<span class="thread-tag strong">${escapeHtml(formatPct(thread.cpuPct))}</span>`;
-      const args = thread.args ? `<div class="thread-args">${escapeHtml(thread.args)}</div>` : "";
-      return `<div class="thread-evidence-item"><div class="thread-head"><span class="thread-name">${command}</span>${tid}${cpu}</div>${args}</div>`;
+  if (
+    summary.gpuUtilAvgPct != null &&
+    summary.gpuUtilAvgPct >= 25 &&
+    summary.gpuUtilAvgPct >= (summary.cpuUtilAvgPct ?? 0)
+  ) {
+    return "GPU load";
+  }
+  if (
+    summary.cpuUtilAvgPct != null &&
+    summary.cpuUtilAvgPct >= 20 &&
+    (summary.gpuUtilAvgPct ?? 0) < 20
+  ) {
+    return "CPU load";
+  }
+  if ((summary.cpuUtilAvgPct ?? 0) > 0 || (summary.gpuUtilAvgPct ?? 0) > 0) {
+    return "Mixed";
+  }
+  return "N/A";
+}
+
+function formatBandwidthDemand(summary?: HardwareWindowSummary): string {
+  if (!summary) {
+    return "N/A";
+  }
+  const avg = summary.gpuMemBandwidthEstimateAvgGBps;
+  const max = summary.gpuMemBandwidthEstimateMaxGBps;
+  const peak = summary.gpuMemBandwidthPeakAvgGBps ?? summary.gpuMemBandwidthPeakMaxGBps;
+  if (typeof avg === "number" && Number.isFinite(avg)) {
+    const ratio =
+      typeof peak === "number" && Number.isFinite(peak) && peak > 0
+        ? ` (${((avg / peak) * 100).toFixed(0)}% peak)`
+        : "";
+    return `${formatUnit("GB/s", avg)} / ${formatUnit("GB/s", max)}${ratio}`;
+  }
+  return "No bandwidth counter";
+}
+
+function classifyBoundType(summary?: HardwareWindowSummary): string {
+  const primaryLoad = classifyPrimaryLoad(summary);
+  if (!summary || primaryLoad === "N/A") {
+    return "N/A";
+  }
+  if (primaryLoad === "CPU load") {
+    return "unknown (CPU BW counter missing)";
+  }
+  const avgBw = summary.gpuMemBandwidthEstimateAvgGBps;
+  const peakBw = summary.gpuMemBandwidthPeakAvgGBps ?? summary.gpuMemBandwidthPeakMaxGBps;
+  if (
+    typeof avgBw === "number" &&
+    Number.isFinite(avgBw) &&
+    typeof peakBw === "number" &&
+    Number.isFinite(peakBw) &&
+    peakBw > 0
+  ) {
+    if (avgBw / peakBw >= 0.65) {
+      return "memory-bound";
+    }
+    if ((summary.gpuUtilAvgPct ?? 0) >= 60) {
+      return "compute-bound";
+    }
+  }
+  return primaryLoad === "GPU load" ? "mixed" : "mixed";
+}
+
+function impactLabelForStage(stage: string): string {
+  switch (stage) {
+    case "T4":
+    case "T4.rag":
+    case "T5.load":
+      return "TTFT-critical";
+    case "T5.prefill":
+      return "TTFT + E2E";
+    case "T5.decode":
+      return "E2E-dominant";
+    default:
+      return "E2E";
+  }
+}
+
+function buildStageLoadSummaries(
+  report: LatencyAggregateReport,
+  hardwareSamples: HardwareTraceSample[],
+): StageLoadSummary[] {
+  const stageConfigs = [
+    {
+      label: "T4",
+      durations: report.messages.map((message) => message.t4AgentPreprocessMs),
+      summaries: report.messages.map((message) => message.hardwareT4),
+      windows: report.messages.flatMap((message) =>
+        typeof message.t4WindowStartedAtMs === "number" &&
+        typeof message.t4WindowEndedAtMs === "number"
+          ? [{ startedAtMs: message.t4WindowStartedAtMs, endedAtMs: message.t4WindowEndedAtMs }]
+          : [],
+      ),
+    },
+    {
+      label: "T4.rag",
+      durations: report.messages.map((message) => message.t4RagRecallMs),
+      summaries: report.messages.map((message) => message.hardwareRag),
+      windows: report.messages.flatMap((message) =>
+        typeof message.ragWindowStartedAtMs === "number" &&
+        typeof message.ragWindowEndedAtMs === "number"
+          ? [{ startedAtMs: message.ragWindowStartedAtMs, endedAtMs: message.ragWindowEndedAtMs }]
+          : [],
+      ),
+    },
+    {
+      label: "T5.load",
+      durations: report.messages.map((message) => message.t5LlmLoadMs),
+      summaries: report.messages.map((message) => message.hardwareT5Load),
+      windows: report.messages.flatMap((message) => message.t5LoadWindows ?? []),
+    },
+    {
+      label: "T5.prefill",
+      durations: report.messages.map((message) => message.t5LlmPrefillMs),
+      summaries: report.messages.map((message) => message.hardwareT5Prefill),
+      windows: report.messages.flatMap((message) => message.t5PrefillWindows ?? []),
+    },
+    {
+      label: "T5.decode",
+      durations: report.messages.map((message) => message.t5LlmDecodeMs),
+      summaries: report.messages.map((message) => message.hardwareT5Decode),
+      windows: report.messages.flatMap((message) => message.t5DecodeWindows ?? []),
+    },
+  ];
+  return stageConfigs
+    .map((stage) => {
+      const durations = stage.durations.filter(
+        (value): value is number =>
+          typeof value === "number" && Number.isFinite(value) && value > 0,
+      );
+      const summaries = stage.summaries.filter((summary): summary is HardwareWindowSummary =>
+        Boolean(summary?.sampleCount),
+      );
+      const stageSamples = collectSamplesForWindows(hardwareSamples, stage.windows);
+      const mergedSummary =
+        mergeHardwareSummaries(summaries) ?? summarizeHardwareSamplesForStage(stageSamples);
+      return {
+        label: stage.label,
+        count: durations.length,
+        avgDurationMs: average(durations),
+        maxDurationMs: maxMaybe(durations),
+        summary: mergedSummary,
+        primaryLoad: classifyPrimaryLoad(mergedSummary),
+        cpuOwnerEvidence: summarizeCpuOwnerEvidence(stageSamples),
+        bandwidthDemand: formatBandwidthDemand(mergedSummary),
+        boundType: classifyBoundType(mergedSummary),
+        impact: impactLabelForStage(stage.label),
+      };
     })
-    .join("")}</div>`;
+    .filter((stage) => stage.count > 0 || stage.summary?.sampleCount);
+}
+
+function renderStageLoadAnalysis(
+  report: LatencyAggregateReport,
+  hardwareSamples: HardwareTraceSample[],
+): string {
+  const stages = buildStageLoadSummaries(report, hardwareSamples);
+  if (stages.length === 0) {
+    return "";
+  }
+  return `
+    <section class="panel" style="margin-top:20px">
+      <h2>Agent Stage Load Analysis</h2>
+      <p class="section-note">This section summarizes which stages are primarily CPU-driven or GPU-driven across the full agent scene. CPU ownership is evidenced by aggregated hot threads captured inside each stage window. GPU bandwidth demand uses sampled GPU memory-bandwidth estimates when available. CPU compute-vs-memory classification is intentionally left as unknown unless a real CPU bandwidth counter exists.</p>
+      <table class="series-table">
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th>Count</th>
+            <th>Avg Duration</th>
+            <th>Max Duration</th>
+            <th>Impact</th>
+            <th>Primary Load</th>
+            <th>CPU Evidence</th>
+            <th>CPU Avg / Max</th>
+            <th>GPU Avg / Max</th>
+            <th>Bandwidth Demand</th>
+            <th>Bound Type</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${stages
+            .map(
+              (stage) => `
+                <tr>
+                  <td>${escapeHtml(stage.label)}</td>
+                  <td>${escapeHtml(formatCount(stage.count))}</td>
+                  <td>${escapeHtml(formatMs(stage.avgDurationMs))}</td>
+                  <td>${escapeHtml(formatMs(stage.maxDurationMs))}</td>
+                  <td>${escapeHtml(stage.impact)}</td>
+                  <td>${escapeHtml(stage.primaryLoad)}</td>
+                  <td>${escapeHtml(stage.cpuOwnerEvidence)}</td>
+                  <td>${escapeHtml(`${formatPct(stage.summary?.cpuUtilAvgPct)} / ${formatPct(stage.summary?.cpuUtilMaxPct)}`)}</td>
+                  <td>${escapeHtml(`${formatPct(stage.summary?.gpuUtilAvgPct)} / ${formatPct(stage.summary?.gpuUtilMaxPct)}`)}</td>
+                  <td>${escapeHtml(stage.bandwidthDemand)}</td>
+                  <td>${escapeHtml(stage.boundType)}</td>
+                </tr>`,
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </section>`;
 }
 
 function deriveGpuUtilForSample(sample: HardwareTraceSample): number | undefined {
@@ -362,303 +795,6 @@ function buildMessageGanttSegments(message: LatencyMessageSummary): GanttSegment
   }
   pushWindow("T6", "#ec4899", message.t6WindowStartedAtMs, message.t6WindowEndedAtMs);
   return segments;
-}
-
-function isWindowActive(window: TimeWindow | undefined, epochMs: number): boolean {
-  return Boolean(
-    window &&
-    Number.isFinite(window.startedAtMs) &&
-    Number.isFinite(window.endedAtMs) &&
-    epochMs >= window.startedAtMs &&
-    epochMs <= window.endedAtMs,
-  );
-}
-
-function findActiveScenarioStages(
-  messages: LatencyMessageSummary[],
-  epochMs: number,
-): ActiveScenarioStage[] {
-  const active: ActiveScenarioStage[] = [];
-  const messageLabelFor = (message: LatencyMessageSummary) =>
-    String(message.messageId ?? message.runId ?? message.key);
-  const pushStage = (
-    message: LatencyMessageSummary,
-    stageKind: ActiveScenarioStage["stageKind"],
-    stageLabel: string,
-  ) => {
-    active.push({
-      messageLabel: messageLabelFor(message),
-      stageKind,
-      stageLabel,
-    });
-  };
-  for (const message of messages) {
-    const ragWindow =
-      typeof message.ragWindowStartedAtMs === "number" &&
-      typeof message.ragWindowEndedAtMs === "number"
-        ? { startedAtMs: message.ragWindowStartedAtMs, endedAtMs: message.ragWindowEndedAtMs }
-        : undefined;
-    const t1Window =
-      typeof message.t1WindowStartedAtMs === "number" &&
-      typeof message.t1WindowEndedAtMs === "number"
-        ? { startedAtMs: message.t1WindowStartedAtMs, endedAtMs: message.t1WindowEndedAtMs }
-        : undefined;
-    const t2Window =
-      typeof message.t2WindowStartedAtMs === "number" &&
-      typeof message.t2WindowEndedAtMs === "number"
-        ? { startedAtMs: message.t2WindowStartedAtMs, endedAtMs: message.t2WindowEndedAtMs }
-        : undefined;
-    const t3Window =
-      typeof message.t3WindowStartedAtMs === "number" &&
-      typeof message.t3WindowEndedAtMs === "number"
-        ? { startedAtMs: message.t3WindowStartedAtMs, endedAtMs: message.t3WindowEndedAtMs }
-        : undefined;
-    const t4Window =
-      typeof message.t4WindowStartedAtMs === "number" &&
-      typeof message.t4WindowEndedAtMs === "number"
-        ? { startedAtMs: message.t4WindowStartedAtMs, endedAtMs: message.t4WindowEndedAtMs }
-        : undefined;
-    const t6Window =
-      typeof message.t6WindowStartedAtMs === "number" &&
-      typeof message.t6WindowEndedAtMs === "number"
-        ? { startedAtMs: message.t6WindowStartedAtMs, endedAtMs: message.t6WindowEndedAtMs }
-        : undefined;
-
-    if (isWindowActive(t1Window, epochMs)) {
-      pushStage(message, "t1", "T1 inbound");
-      continue;
-    }
-    if (isWindowActive(t2Window, epochMs)) {
-      pushStage(message, "t2", "T2 enqueue");
-      continue;
-    }
-    if (isWindowActive(t3Window, epochMs)) {
-      pushStage(message, "t3", "T3 queue wait");
-      continue;
-    }
-    const activeLoad = (message.t5LoadWindows ?? []).some((window) =>
-      isWindowActive(window, epochMs),
-    );
-    if (activeLoad) {
-      pushStage(message, "load", "T5.load");
-      continue;
-    }
-    const activePrefill = (message.t5PrefillWindows ?? []).some((window) =>
-      isWindowActive(window, epochMs),
-    );
-    if (activePrefill) {
-      pushStage(message, "prefill", "T5.prefill");
-      continue;
-    }
-    const activeDecode = (message.t5DecodeWindows ?? []).some((window) =>
-      isWindowActive(window, epochMs),
-    );
-    if (activeDecode) {
-      pushStage(message, "decode", "T5.decode");
-      continue;
-    }
-    if (isWindowActive(ragWindow, epochMs)) {
-      pushStage(message, "rag", "RAG recall");
-      continue;
-    }
-    if (isWindowActive(t4Window, epochMs)) {
-      pushStage(message, "t4", "T4 preprocess");
-      continue;
-    }
-    if (isWindowActive(t6Window, epochMs)) {
-      pushStage(message, "t6", "T6 outbound");
-    }
-  }
-  return active;
-}
-
-function summarizeActiveStageText(activeStages: ActiveScenarioStage[]): string {
-  if (activeStages.length === 0) {
-    return "No active tracked stage";
-  }
-  return activeStages
-    .map((stage) => `${stage.messageLabel} / ${stage.stageLabel}`)
-    .slice(0, 3)
-    .join(" | ");
-}
-
-function summarizeScenarioChange(params: {
-  activeStages: ActiveScenarioStage[];
-  cpuDelta?: number;
-  gpuDelta?: number;
-  topThreads: HardwareThreadSample[];
-}): string {
-  const { activeStages, gpuDelta, topThreads } = params;
-  const hasStage = (kind: ActiveScenarioStage["stageKind"]) =>
-    activeStages.some((stage) => stage.stageKind === kind);
-  const dominantThread = topThreads[0]?.command?.toLowerCase() ?? "";
-  const dominantCpu = topThreads[0]?.cpuPct;
-  if (hasStage("load")) {
-    if (dominantThread.includes("ollama")) {
-      return "Correlated with T5.load, and the hottest CPU thread belongs to Ollama/runtime. Evidence points to model/runtime side setup rather than steady GPU compute.";
-    }
-    return "Correlated with T5.load. CPU-side setup dominates at this boundary; use the thread snapshot to distinguish OpenClaw orchestration from runtime/model preparation.";
-  }
-  if (hasStage("prefill")) {
-    if ((gpuDelta ?? 0) >= 18) {
-      return "Correlated with T5.prefill. GPU rises as prompt ingestion starts; the thread list shows which process is spending CPU to feed that transition.";
-    }
-    if ((gpuDelta ?? 0) <= -18) {
-      return "Correlated with a prefill boundary. This is a real compute interruption, but the thread snapshot should be used as the primary evidence for who owned the CPU work.";
-    }
-  }
-  if (hasStage("decode")) {
-    if ((gpuDelta ?? 0) >= 15) {
-      return "Correlated with T5.decode. GPU compute resumed; CPU evidence should usually show only light runtime or streaming overhead.";
-    }
-    if ((gpuDelta ?? 0) <= -15) {
-      return "Correlated with a decode boundary. In multi-call scenes this often marks a handoff to the next load/prefill slice, but confirm with the thread evidence.";
-    }
-  }
-  if (hasStage("rag")) {
-    return "Correlated with runtime RAG recall. The thread snapshot shows whether the CPU was busy in retrieval/indexing glue or in the embedding/runtime process.";
-  }
-  if (hasStage("t4")) {
-    return "Correlated with T4 preprocess. This is CPU-side work before the model call; thread evidence should identify whether OpenClaw itself was the hotspot.";
-  }
-  if (hasStage("t6")) {
-    return "Correlated with T6 outbound handling. GPU should already be low here; thread evidence should confirm transport/formatting dominated.";
-  }
-  if (typeof dominantCpu === "number" && dominantCpu > 0) {
-    return "No tracked stage owned this sample strongly enough. Use the top CPU threads as the primary evidence for what code path was active.";
-  }
-  return "A stage boundary or concurrency change occurred, but the sample has no strong thread evidence. Increase sampling frequency if this point matters.";
-}
-
-function buildScenarioChangeEvents(
-  report: LatencyAggregateReport,
-  hardwareSamples: HardwareTraceSample[],
-): ScenarioChangeEvent[] {
-  const scenario = report.scenario;
-  if (
-    !scenario ||
-    typeof scenario.startedAtMs !== "number" ||
-    !Number.isFinite(scenario.startedAtMs) ||
-    typeof scenario.endedAtMs !== "number" ||
-    !Number.isFinite(scenario.endedAtMs)
-  ) {
-    return [];
-  }
-  const samples = filterSamplesForWindow(
-    hardwareSamples,
-    scenario.startedAtMs,
-    scenario.endedAtMs,
-  ).toSorted((left, right) => left.epochMs - right.epochMs);
-  const strongCpuDeltaThreshold = 20;
-  const strongGpuDeltaThreshold = 28;
-  const strongCombinedThreshold = 34;
-  const collapseWindowMs = 2_500;
-  const maxRenderedEvents = 6;
-  const rawEvents: Array<Omit<ScenarioChangeEvent, "index">> = [];
-  for (let index = 1; index < samples.length; index += 1) {
-    const previous = samples[index - 1];
-    const current = samples[index];
-    const previousCpu = previous.cpuUtilPct ?? 0;
-    const currentCpu = current.cpuUtilPct ?? 0;
-    const previousGpu = deriveGpuUtilForSample(previous) ?? 0;
-    const currentGpu = deriveGpuUtilForSample(current) ?? 0;
-    const cpuDelta = currentCpu - previousCpu;
-    const gpuDelta = currentGpu - previousGpu;
-    const score = Math.max(Math.abs(cpuDelta), Math.abs(gpuDelta));
-    if (
-      Math.abs(cpuDelta) < strongCpuDeltaThreshold &&
-      Math.abs(gpuDelta) < strongGpuDeltaThreshold &&
-      score < strongCombinedThreshold
-    ) {
-      continue;
-    }
-    const topThreads = filterRelevantThreads(current.topCpuThreads ?? []);
-    const activeStages = findActiveScenarioStages(report.messages, current.epochMs);
-    const summary = summarizeScenarioChange({
-      activeStages,
-      cpuDelta,
-      gpuDelta,
-      topThreads,
-    });
-    rawEvents.push({
-      epochMs: current.epochMs,
-      elapsedMs: current.epochMs - scenario.startedAtMs,
-      cpuValue: currentCpu,
-      gpuValue: currentGpu,
-      cpuDelta,
-      gpuDelta,
-      activeStages,
-      stageText: summarizeActiveStageText(activeStages),
-      topThreads,
-      threadEvidenceText: formatThreadEvidence(topThreads),
-      summary,
-    });
-  }
-  const merged: Array<Omit<ScenarioChangeEvent, "index">> = [];
-  for (const event of rawEvents) {
-    const previous = merged.at(-1);
-    const score = Math.max(Math.abs(event.cpuDelta ?? 0), Math.abs(event.gpuDelta ?? 0));
-    const previousScore = previous
-      ? Math.max(Math.abs(previous.cpuDelta ?? 0), Math.abs(previous.gpuDelta ?? 0))
-      : -1;
-    if (previous && event.epochMs - previous.epochMs <= collapseWindowMs) {
-      if (score > previousScore) {
-        merged[merged.length - 1] = event;
-      }
-      continue;
-    }
-    merged.push(event);
-  }
-  const strongest = merged
-    .map((event) => ({
-      event,
-      score: Math.max(Math.abs(event.cpuDelta ?? 0), Math.abs(event.gpuDelta ?? 0)),
-    }))
-    .toSorted((left, right) => right.score - left.score)
-    .slice(0, maxRenderedEvents)
-    .map((entry) => entry.event)
-    .toSorted((left, right) => left.epochMs - right.epochMs);
-  return strongest.map((event, index) => ({ ...event, index: index + 1 }));
-}
-
-function renderScenarioChangeLog(events: ScenarioChangeEvent[]): string {
-  if (events.length === 0) {
-    return "";
-  }
-  return `
-    <section class="mini-panel" style="margin-top:14px">
-      <div class="mini-panel-title">Scenario Change Log</div>
-      <p class="section-note">Each numbered event is a significant CPU/GPU step change aligned to the tracked software windows. This is a timing correlation, not a PMU-level causal proof, but it is enough to explain what the runtime was doing at each visible jump.</p>
-      <table class="series-table">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Time</th>
-            <th>CPU Delta</th>
-            <th>GPU Delta</th>
-            <th>Active Stage</th>
-            <th>Top CPU Threads</th>
-            <th>Evidence-based Note</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${events
-            .map(
-              (event) => `
-                <tr>
-                  <td><span class="event-badge">${event.index}</span></td>
-                  <td>${escapeHtml(formatMs(event.elapsedMs))}</td>
-                  <td>${escapeHtml(formatDelta(event.cpuDelta))}</td>
-                  <td>${escapeHtml(formatDelta(event.gpuDelta))}</td>
-                  <td>${escapeHtml(event.stageText)}</td>
-                  <td>${renderThreadEvidenceHtml(event.topThreads)}</td>
-                  <td>${escapeHtml(event.summary)}</td>
-                </tr>`,
-            )
-            .join("")}
-        </tbody>
-      </table>
-    </section>`;
 }
 
 function buildMessageCsv(messages: LatencyMessageSummary[]): string {
@@ -1415,7 +1551,6 @@ function renderScenarioCpuGpuOverlay(
   if (samples.length === 0) {
     return "";
   }
-  const changeEvents = buildScenarioChangeEvents(report, hardwareSamples);
   const width = 1160;
   const height = 260;
   const paddingLeft = 110;
@@ -1468,19 +1603,10 @@ function renderScenarioCpuGpuOverlay(
   const legendBoxY = 8;
   const legendBoxWidth = 170;
   const legendBoxHeight = 46;
-  const markerCircles = changeEvents
-    .map((event) => {
-      const x = paddingLeft + (event.elapsedMs / totalMs) * (width - paddingLeft - paddingRight);
-      return `
-        <line x1="${x.toFixed(1)}" y1="${paddingTop}" x2="${x.toFixed(1)}" y2="${height - paddingBottom}" stroke="rgba(15,23,42,0.10)" stroke-width="1" stroke-dasharray="3 5" />
-        <circle cx="${x.toFixed(1)}" cy="${paddingTop + 10}" r="9" fill="#111827" opacity="0.92" />
-        <text x="${x.toFixed(1)}" y="${paddingTop + 14}" text-anchor="middle" class="event-marker-text">${event.index}</text>`;
-    })
-    .join("");
   return `
     <section class="panel" style="margin-top:20px">
       <h2>Scenario CPU/GPU Overlay</h2>
-      <p class="section-note">CPU and GPU utilization on the same scene-wide time axis as the gantt, so you can visually match software stage overlaps with hardware pressure changes. Numbered markers indicate significant utilization jumps; the change log below explains what each jump corresponds to.</p>
+      <p class="section-note">CPU and GPU utilization on the same scene-wide time axis as the gantt, so you can visually match software stage overlaps with hardware pressure changes. Use the stage analysis table below for resource ownership, CPU thread evidence, and bandwidth demand rather than single-point delta annotations.</p>
       <div class="download-row small">
         <button class="dl-btn" data-download="scenario-cpu-gpu-svg">Download scenario CPU/GPU SVG</button>
       </div>
@@ -1492,7 +1618,6 @@ function renderScenarioCpuGpuOverlay(
         <line x1="${paddingLeft}" y1="${yForPct(avgGpu)}" x2="${width - paddingRight}" y2="${yForPct(avgGpu)}" class="guide stage-guide" />
         <line x1="${paddingLeft}" y1="${yForPct(maxCpu)}" x2="${width - paddingRight}" y2="${yForPct(maxCpu)}" class="guide avg-guide" stroke-opacity="0.45" />
         <line x1="${paddingLeft}" y1="${yForPct(maxGpu)}" x2="${width - paddingRight}" y2="${yForPct(maxGpu)}" class="guide stage-guide" stroke-opacity="0.45" />
-        ${markerCircles}
         <polyline points="${cpuPolyline}" fill="none" stroke="#0f766e" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <polyline points="${gpuPolyline}" fill="none" stroke="#f97316" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
         <text x="${width / 2}" y="18" text-anchor="middle" class="chart-overlay-title">Scenario CPU/GPU Utilization</text>
@@ -1513,7 +1638,6 @@ function renderScenarioCpuGpuOverlay(
         <line x1="${legendBoxX + 10}" y1="${legendBoxY + 32}" x2="${legendBoxX + 42}" y2="${legendBoxY + 32}" stroke="#f97316" stroke-width="3" />
         <text x="${legendBoxX + 50}" y="${legendBoxY + 36}" class="axis-label">GPU</text>
       </svg>
-      ${renderScenarioChangeLog(changeEvents)}
     </section>`;
 }
 
@@ -2258,6 +2382,7 @@ export function renderLatencyReportHtml(
     ${renderScenarioSection(report, hardwareSamples)}
     ${renderScenarioMessageGantt(report)}
     ${renderScenarioCpuGpuOverlay(report, hardwareSamples)}
+    ${renderStageLoadAnalysis(report, hardwareSamples)}
     <section class="panel">
       <h2>Per-message Timeline</h2>
       <p class="section-note">Each card corresponds to one real message interaction. Token and TPS values are based on what OpenClaw actually sent to the LLM.</p>

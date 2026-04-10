@@ -273,6 +273,9 @@ describe("latency-trace-visualize", () => {
     expect(html).toContain("Scenario Message Gantt");
     expect(html).toContain("Scenario CPU/GPU Overlay");
     expect(html).toContain("Scenario CPU/GPU Utilization");
+    expect(html).toContain("Agent Stage Load Analysis");
+    expect(html).toContain("CPU Evidence");
+    expect(html).toContain("Bandwidth Demand");
     expect(html).toContain("Scenario Message Concurrency");
     expect(html).toContain("Scenario LLM Concurrency");
     expect(html).toContain("Scenario CPU Utilization");
@@ -350,7 +353,7 @@ describe("latency-trace-visualize", () => {
     expect(html).not.toContain('<div class="segment empty"></div>');
   });
 
-  it("renders thread evidence for scenario change events", () => {
+  it("renders aggregated stage load analysis", () => {
     const report: LatencyAggregateReport = {
       recordsScanned: 1,
       scenario: {
@@ -438,12 +441,11 @@ describe("latency-trace-visualize", () => {
         },
       ],
     });
-    expect(html).toContain("Scenario Change Log");
-    expect(html).toContain("Top CPU Threads");
-    expect(html).toContain("thread-evidence-list");
+    expect(html).toContain("Agent Stage Load Analysis");
+    expect(html).toContain("CPU Evidence");
+    expect(html).toContain("Bandwidth Demand");
+    expect(html).toContain("TTFT-critical");
+    expect(html).toContain("T5.prefill");
     expect(html).toContain("node");
-    expect(html).toContain("tid=22");
-    expect(html).toContain("24.1%");
-    expect(html).toContain("Evidence-based Note");
   });
 });
