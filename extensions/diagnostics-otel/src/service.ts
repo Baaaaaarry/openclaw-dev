@@ -232,6 +232,10 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         unit: "1",
         description: "Run attempts",
       });
+      const latencySegmentHistogram = meter.createHistogram("openclaw.latency.segment_ms", {
+        unit: "ms",
+        description: "Latency segment duration",
+      });
 
       if (logsEnabled) {
         const logExporter = new OTLPLogExporter({
@@ -603,6 +607,25 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
         runAttemptCounter.add(1, { "openclaw.attempt": evt.attempt });
       };
 
+      const recordLatencySegment = (
+        evt: Extract<DiagnosticEventPayload, { type: "latency.segment" }>,
+      ) => {
+        const attrs: Record<string, string> = {
+          "openclaw.segment": evt.segment,
+          "openclaw.channel": evt.channel ?? "unknown",
+        };
+        if (evt.stage) {
+          attrs["openclaw.stage"] = evt.stage;
+        }
+        if (evt.provider) {
+          attrs["openclaw.provider"] = evt.provider;
+        }
+        if (evt.model) {
+          attrs["openclaw.model"] = evt.model;
+        }
+        latencySegmentHistogram.record(evt.durationMs, attrs);
+      };
+
       const recordHeartbeat = (
         evt: Extract<DiagnosticEventPayload, { type: "diagnostic.heartbeat" }>,
       ) => {
@@ -644,6 +667,9 @@ export function createDiagnosticsOtelService(): OpenClawPluginService {
               return;
             case "run.attempt":
               recordRunAttempt(evt);
+              return;
+            case "latency.segment":
+              recordLatencySegment(evt);
               return;
             case "diagnostic.heartbeat":
               recordHeartbeat(evt);

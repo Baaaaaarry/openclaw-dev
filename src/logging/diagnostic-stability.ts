@@ -221,6 +221,17 @@ function sanitizeDiagnosticEvent(event: DiagnosticEventPayload): DiagnosticStabi
     case "run.attempt":
       record.count = event.attempt;
       break;
+    case "latency.segment":
+      record.channel = event.channel;
+      record.source = event.segment;
+      record.outcome = event.stage;
+      record.provider = event.provider;
+      record.model = event.model;
+      record.durationMs = event.durationMs;
+      record.queueSize = event.queueSize;
+      record.waitMs = event.waitMs;
+      record.count = event.totalTokens;
+      break;
     case "diagnostic.heartbeat":
       record.webhooks = { ...event.webhooks };
       record.active = event.active;

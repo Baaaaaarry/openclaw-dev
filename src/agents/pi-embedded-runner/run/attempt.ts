@@ -67,6 +67,7 @@ import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { resolveHeartbeatPromptForSystemPrompt } from "../../heartbeat-system-prompt.js";
 import { resolveImageSanitizationLimits } from "../../image-sanitization.js";
+import { wrapStreamFnLlmInference } from "../../llm-inference-trace.js";
 import { buildModelAliasLines } from "../../model-alias-lines.js";
 import { resolveModelAuthMode } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
@@ -1406,6 +1407,15 @@ export async function runEmbeddedAttempt(
           note: "after session create",
         });
         activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
+      }
+      if (params.latencyTrace) {
+        activeSession.agent.streamFn = wrapStreamFnLlmInference(activeSession.agent.streamFn, {
+          ...params.latencyTrace,
+          sessionId: params.sessionId,
+          runId: params.runId,
+          provider: params.provider,
+          model: params.modelId,
+        });
       }
 
       // Anthropic Claude endpoints can reject replayed `thinking` blocks

@@ -1,3 +1,4 @@
+import type { LatencyTraceContext } from "../infra/latency-trace.js";
 import type {
   MediaUnderstandingDecision,
   MediaUnderstandingOutput,
@@ -204,6 +205,8 @@ export type MsgContext = {
    * Used for hook confirmation messages like "Session context saved to memory".
    */
   HookMessages?: string[];
+  /** Per-message diagnostic latency state threaded through dispatch and agent runtime. */
+  LatencyTrace?: LatencyTraceContext;
 };
 
 export type FinalizedMsgContext = Omit<MsgContext, "CommandAuthorized"> & {

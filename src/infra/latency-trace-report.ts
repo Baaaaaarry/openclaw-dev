@@ -589,35 +589,41 @@ function applySegment(summary: LatencyMessageSummary, record: PersistedLatencySe
         }
         return;
       }
-      summary.t5LlmCallCount = (summary.t5LlmCallCount ?? 0) + 1;
-      summary.t5LlmTotalMs = addMaybeNumber(
-        summary.t5LlmTotalMs,
-        record.totalMs ?? record.durationMs,
-      );
-      summary.t5LlmLoadMs = addMaybeNumber(summary.t5LlmLoadMs, toFiniteNumber(record.loadMs));
-      summary.t5LlmPrefillMs = addMaybeNumber(
-        summary.t5LlmPrefillMs,
-        toFiniteNumber(record.promptEvalMs),
-      );
-      summary.t5LlmDecodeMs = addMaybeNumber(summary.t5LlmDecodeMs, toFiniteNumber(record.evalMs));
-      summary.t5LlmTtftMs = summary.t5LlmTtftMs ?? toFiniteNumber(record.ttftMs);
-      const inputTokens =
-        toFiniteNumber(record.inputTokens) ?? toFiniteNumber(record.promptEvalCount);
-      const outputTokens = toFiniteNumber(record.outputTokens) ?? toFiniteNumber(record.evalCount);
-      const totalTokens =
-        toFiniteNumber(record.totalTokens) ??
-        ((inputTokens ?? 0) + (outputTokens ?? 0) || undefined);
-      summary.t5InputTokens = addMaybeNumber(summary.t5InputTokens, inputTokens);
-      summary.t5OutputTokens = addMaybeNumber(summary.t5OutputTokens, outputTokens);
-      summary.t5CacheReadTokens = addMaybeNumber(
-        summary.t5CacheReadTokens,
-        toFiniteNumber(record.cacheReadTokens),
-      );
-      summary.t5CacheWriteTokens = addMaybeNumber(
-        summary.t5CacheWriteTokens,
-        toFiniteNumber(record.cacheWriteTokens),
-      );
-      summary.t5TotalTokens = addMaybeNumber(summary.t5TotalTokens, totalTokens);
+      {
+        summary.t5LlmCallCount = (summary.t5LlmCallCount ?? 0) + 1;
+        summary.t5LlmTotalMs = addMaybeNumber(
+          summary.t5LlmTotalMs,
+          record.totalMs ?? record.durationMs,
+        );
+        summary.t5LlmLoadMs = addMaybeNumber(summary.t5LlmLoadMs, toFiniteNumber(record.loadMs));
+        summary.t5LlmPrefillMs = addMaybeNumber(
+          summary.t5LlmPrefillMs,
+          toFiniteNumber(record.promptEvalMs),
+        );
+        summary.t5LlmDecodeMs = addMaybeNumber(
+          summary.t5LlmDecodeMs,
+          toFiniteNumber(record.evalMs),
+        );
+        summary.t5LlmTtftMs = summary.t5LlmTtftMs ?? toFiniteNumber(record.ttftMs);
+        const inputTokens =
+          toFiniteNumber(record.inputTokens) ?? toFiniteNumber(record.promptEvalCount);
+        const outputTokens =
+          toFiniteNumber(record.outputTokens) ?? toFiniteNumber(record.evalCount);
+        const totalTokens =
+          toFiniteNumber(record.totalTokens) ??
+          ((inputTokens ?? 0) + (outputTokens ?? 0) || undefined);
+        summary.t5InputTokens = addMaybeNumber(summary.t5InputTokens, inputTokens);
+        summary.t5OutputTokens = addMaybeNumber(summary.t5OutputTokens, outputTokens);
+        summary.t5CacheReadTokens = addMaybeNumber(
+          summary.t5CacheReadTokens,
+          toFiniteNumber(record.cacheReadTokens),
+        );
+        summary.t5CacheWriteTokens = addMaybeNumber(
+          summary.t5CacheWriteTokens,
+          toFiniteNumber(record.cacheWriteTokens),
+        );
+        summary.t5TotalTokens = addMaybeNumber(summary.t5TotalTokens, totalTokens);
+      }
       if (
         typeof record.startedAtMs === "number" &&
         Number.isFinite(record.startedAtMs) &&

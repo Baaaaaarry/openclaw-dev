@@ -1594,10 +1594,9 @@ function renderScenarioCpuGpuOverlay(
       const minGap = 12;
       const unclampedY =
         previous && Math.abs(entry.y - previous.y) < minGap ? previous.y + minGap : entry.y;
-      return {
-        ...entry,
+      return Object.assign({}, entry, {
         y: Math.max(paddingTop + 10, Math.min(height - paddingBottom - 2, unclampedY)),
-      };
+      });
     });
   const legendBoxX = width - 188;
   const legendBoxY = 8;
@@ -1676,7 +1675,7 @@ function renderMessageCards(
         <article class="message-card">
           <div class="message-header">
             <div>
-              <div class="message-title">${escapeHtml(String(message.accountId ?? "unknown"))}</div>
+              <div class="message-title">${escapeHtml(message.accountId ?? "unknown")}</div>
               <div class="message-subtitle">${escapeHtml(String(message.messageId ?? message.key))}</div>
             </div>
             <div class="message-e2e">${escapeHtml(formatMs(message.localCompleteMs))}</div>
@@ -2126,20 +2125,20 @@ function renderChartSvg(metric: ChartMetric): string {
     return ticks;
   }, []);
   const xMarkers = (metric.xMarkers ?? [])
-    .map((marker) => ({
-      ...marker,
-      x: paddingLeft + ((marker.x - minX) / xSpan) * (width - paddingLeft - paddingRight),
-    }))
+    .map((marker) =>
+      Object.assign({}, marker, {
+        x: paddingLeft + ((marker.x - minX) / xSpan) * (width - paddingLeft - paddingRight),
+      }),
+    )
     .filter((marker) => Number.isFinite(marker.x));
   const stagedMarkers = xMarkers
     .toSorted((left, right) => left.x - right.x)
     .map((marker, index, markers) => {
       const previous = markers[index - 1];
       const crowded = previous ? marker.x - previous.x < 28 : false;
-      return {
-        ...marker,
+      return Object.assign({}, marker, {
         labelY: height - paddingBottom + (crowded ? 28 : 16),
-      };
+      });
     });
   return `
     <svg class="chart-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="${escapeHtml(metric.title)}">

@@ -219,7 +219,7 @@ export function createLlmPayloadLogger(params: {
     const wrapped: StreamFn = (model, context, options) => {
       const nextOnPayload = (payload: unknown) => {
         recordRequest(payload);
-        options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, model);
       };
       const maybeStream = streamFn(model, context, {
         ...options,

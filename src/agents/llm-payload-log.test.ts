@@ -52,11 +52,14 @@ describe("createLlmPayloadLogger", () => {
 
     expect(logger).not.toBeNull();
 
-    const wrapped = logger?.wrapStreamFn((_, __, options) => {
-      options?.onPayload?.({
-        model: "gpt-5.4",
-        input: [{ role: "user", content: "hello" }],
-      });
+    const wrapped = logger?.wrapStreamFn((model, __, options) => {
+      options?.onPayload?.(
+        {
+          model: "gpt-5.4",
+          input: [{ role: "user", content: "hello" }],
+        },
+        model,
+      );
       return createMockStream() as never;
     });
 
