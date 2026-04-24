@@ -13,10 +13,15 @@ import { renderMemoryWikiStatus, resolveMemoryWikiStatus } from "./status.js";
 
 const WikiStatusSchema = Type.Object({}, { additionalProperties: false });
 const WikiLintSchema = Type.Object({}, { additionalProperties: false });
-const WikiSearchBackendSchema = Type.Union(
-  WIKI_SEARCH_BACKENDS.map((value) => Type.Literal(value)),
-);
-const WikiSearchCorpusSchema = Type.Union(WIKI_SEARCH_CORPORA.map((value) => Type.Literal(value)));
+function stringEnum<const T extends readonly string[]>(values: T) {
+  return Type.Unsafe<T[number]>({
+    type: "string",
+    enum: [...values],
+  });
+}
+
+const WikiSearchBackendSchema = stringEnum(WIKI_SEARCH_BACKENDS);
+const WikiSearchCorpusSchema = stringEnum(WIKI_SEARCH_CORPORA);
 const WikiSearchSchema = Type.Object(
   {
     query: Type.String({ minLength: 1 }),
@@ -60,7 +65,7 @@ const WikiClaimSchema = Type.Object(
 );
 const WikiApplySchema = Type.Object(
   {
-    op: Type.Union([Type.Literal("create_synthesis"), Type.Literal("update_metadata")]),
+    op: stringEnum(["create_synthesis", "update_metadata"] as const),
     title: Type.Optional(Type.String({ minLength: 1 })),
     body: Type.Optional(Type.String({ minLength: 1 })),
     lookup: Type.Optional(Type.String({ minLength: 1 })),
@@ -68,7 +73,9 @@ const WikiApplySchema = Type.Object(
     claims: Type.Optional(Type.Array(WikiClaimSchema)),
     contradictions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
     questions: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
-    confidence: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1 }), Type.Null()])),
+    confidence: Type.Optional(
+      Type.Unsafe<number | null>({ type: ["number", "null"], minimum: 0, maximum: 1 }),
+    ),
     status: Type.Optional(Type.String({ minLength: 1 })),
   },
   { additionalProperties: false },
