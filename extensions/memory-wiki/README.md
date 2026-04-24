@@ -106,6 +106,8 @@ openclaw wiki status
 openclaw wiki doctor
 openclaw wiki init
 openclaw wiki ingest ./notes/alpha.md
+openclaw wiki ingest ./docs/quarterly-report.pdf
+openclaw wiki ingest ./slides/roadmap.pptx
 openclaw wiki compile
 openclaw wiki lint
 openclaw wiki search "alpha"
@@ -139,6 +141,8 @@ openclaw wiki obsidian daily
 - `wiki_get`
 
 The plugin also registers a non-exclusive memory corpus supplement, so shared `memory_search` / `memory_get` flows can reach the wiki when the active memory plugin supports corpus selection.
+
+`wiki ingest` accepts plain text and markdown files directly. It also supports `.pdf` and `.pptx` by extracting slide/document text into a `source` page, plus best-effort text extraction for legacy `.ppt` files.
 
 `wiki_apply` accepts structured `claims` payloads for synthesis and metadata updates, so the wiki can store claim-level evidence instead of only page-level prose.
 

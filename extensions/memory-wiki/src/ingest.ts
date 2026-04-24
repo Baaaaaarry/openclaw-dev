@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { compileMemoryWikiVault } from "./compile.js";
 import type { ResolvedMemoryWikiConfig } from "./config.js";
+import { extractWikiSourceContent } from "./document-extract.js";
 import { appendMemoryWikiLog } from "./log.js";
 import { renderMarkdownFence, renderWikiMarkdown, slugifyWikiSegment } from "./markdown.js";
 import { initializeMemoryWikiVault } from "./vault.js";
@@ -30,14 +31,6 @@ function resolveSourceTitle(sourcePath: string, explicitTitle?: string): string 
   return path.basename(sourcePath, path.extname(sourcePath)).replace(/[-_]+/g, " ").trim();
 }
 
-function assertUtf8Text(buffer: Buffer, sourcePath: string): string {
-  const preview = buffer.subarray(0, Math.min(buffer.length, 4096));
-  if (preview.includes(0)) {
-    throw new Error(`Cannot ingest binary file as markdown source: ${sourcePath}`);
-  }
-  return buffer.toString("utf8");
-}
-
 export async function ingestMemoryWikiSource(params: {
   config: ResolvedMemoryWikiConfig;
   inputPath: string;
@@ -47,7 +40,7 @@ export async function ingestMemoryWikiSource(params: {
   await initializeMemoryWikiVault(params.config, { nowMs: params.nowMs });
   const sourcePath = path.resolve(params.inputPath);
   const buffer = await fs.readFile(sourcePath);
-  const content = assertUtf8Text(buffer, sourcePath);
+  const extracted = await extractWikiSourceContent({ buffer, sourcePath });
   const title = resolveSourceTitle(sourcePath, params.title);
   const slug = slugifyWikiSegment(title);
   const pageId = `source.${slug}`;
@@ -62,6 +55,8 @@ export async function ingestMemoryWikiSource(params: {
       id: pageId,
       title,
       sourceType: "local-file",
+      sourceFormat: extracted.format,
+      sourceExtractedBy: extracted.extractedBy,
       sourcePath,
       ingestedAt: timestamp,
       updatedAt: timestamp,
@@ -72,12 +67,14 @@ export async function ingestMemoryWikiSource(params: {
       "",
       "## Source",
       `- Type: \`local-file\``,
+      `- Format: \`${extracted.format}\``,
+      `- Extracted via: \`${extracted.extractedBy}\``,
       `- Path: \`${sourcePath}\``,
       `- Bytes: ${buffer.byteLength}`,
       `- Updated: ${timestamp}`,
       "",
       "## Content",
-      renderMarkdownFence(content, "text"),
+      renderMarkdownFence(extracted.text, "text"),
       "",
       "## Notes",
       "<!-- openclaw:human:start -->",
