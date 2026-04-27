@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
+import path from "node:path";
 import type { Command } from "commander";
 import type { OpenClawConfig } from "../api.js";
 import { applyMemoryWikiMutation } from "./apply.js";
+import {
+  renderMemoryWikiBenchmarkResult,
+  runMemoryWikiBenchmark,
+  WIKI_BENCHMARK_PROFILES,
+  writeMemoryWikiBenchmarkTemplate,
+  type WikiBenchmarkProfile,
+} from "./benchmark.js";
 import {
   importChatGptConversations,
   rollbackChatGptImportRun,
@@ -58,6 +66,17 @@ type WikiLintCommandOptions = {
 type WikiIngestCommandOptions = {
   json?: boolean;
   title?: string;
+};
+
+type WikiBenchmarkRunCommandOptions = {
+  json?: boolean;
+  profile?: WikiBenchmarkProfile;
+  backend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  corpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
+};
+
+type WikiBenchmarkTemplateCommandOptions = {
+  json?: boolean;
 };
 
 type WikiSearchCommandOptions = {
@@ -355,6 +374,50 @@ export async function runWikiIngest(params: {
     render: (value) =>
       `Ingested ${value.sourcePath} into ${value.pagePath}. Refreshed ${value.indexUpdatedFiles.length} index file${value.indexUpdatedFiles.length === 1 ? "" : "s"}.`,
   });
+}
+
+export async function runWikiBenchmark(params: {
+  config: ResolvedMemoryWikiConfig;
+  datasetPath: string;
+  appConfig?: OpenClawConfig;
+  profile?: WikiBenchmarkProfile;
+  searchBackend?: ResolvedMemoryWikiConfig["search"]["backend"];
+  searchCorpus?: ResolvedMemoryWikiConfig["search"]["corpus"];
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  await syncMemoryWikiImportedSources({ config: params.config, appConfig: params.appConfig });
+  const result = await runMemoryWikiBenchmark({
+    config: params.config,
+    datasetPath: params.datasetPath,
+    appConfig: params.appConfig,
+    profile: params.profile,
+    searchBackend: params.searchBackend,
+    searchCorpus: params.searchCorpus,
+  });
+  if (result.failedCases > 0) {
+    process.exitCode = 1;
+  }
+  writeOutput(
+    params.json ? JSON.stringify(result, null, 2) : renderMemoryWikiBenchmarkResult(result),
+    params.stdout,
+  );
+  return result;
+}
+
+export async function runWikiBenchmarkTemplate(params: {
+  outputPath: string;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const outputPath = await writeMemoryWikiBenchmarkTemplate(params.outputPath);
+  writeOutput(
+    params.json
+      ? JSON.stringify({ outputPath }, null, 2)
+      : `Wrote benchmark template to ${outputPath}.`,
+    params.stdout,
+  );
+  return { outputPath };
 }
 
 export async function runWikiSearch(params: {
@@ -719,6 +782,47 @@ export function registerWikiCli(
     .option("--json", "Print JSON")
     .action(async (inputPath: string, opts: WikiIngestCommandOptions) => {
       await runWikiIngest({ config, inputPath, title: opts.title, json: opts.json });
+    });
+
+  const benchmark = wiki
+    .command("benchmark")
+    .description("Run benchmark suites against the current wiki");
+  addWikiSearchConfigOptions(
+    benchmark
+      .command("run")
+      .description("Evaluate the wiki with BEIR, RAGAS, CRUD-RAG, and LongMemEval style profiles")
+      .argument("<dataset-path>", "Path to the benchmark dataset JSON file"),
+  )
+    .option(
+      "--profile <profile>",
+      `Benchmark profile (${WIKI_BENCHMARK_PROFILES.join(", ")})`,
+      (value: string) => parseWikiSearchEnumOption(value, WIKI_BENCHMARK_PROFILES, "profile"),
+    )
+    .option("--json", "Print JSON")
+    .action(async (datasetPath: string, opts: WikiBenchmarkRunCommandOptions) => {
+      await runWikiBenchmark({
+        config,
+        appConfig,
+        datasetPath,
+        profile: opts.profile,
+        searchBackend: opts.backend,
+        searchCorpus: opts.corpus,
+        json: opts.json,
+      });
+    });
+
+  benchmark
+    .command("template")
+    .description("Write a starter benchmark dataset JSON file")
+    .argument("[output-path]", "Output path", ".openclaw-wiki/benchmark-template.json")
+    .option("--json", "Print JSON")
+    .action(async (outputPath: string, opts: WikiBenchmarkTemplateCommandOptions) => {
+      await runWikiBenchmarkTemplate({
+        outputPath: path.isAbsolute(outputPath)
+          ? outputPath
+          : path.join(config.vault.path, outputPath),
+        json: opts.json,
+      });
     });
 
   addWikiSearchConfigOptions(

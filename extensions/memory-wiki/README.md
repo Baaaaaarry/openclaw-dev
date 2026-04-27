@@ -110,6 +110,8 @@ openclaw wiki ingest ./docs/quarterly-report.pdf
 openclaw wiki ingest ./slides/roadmap.pptx
 openclaw wiki compile
 openclaw wiki lint
+openclaw wiki benchmark template
+openclaw wiki benchmark run .openclaw-wiki/benchmark-template.json
 openclaw wiki search "alpha"
 openclaw wiki get entity.alpha --from 1 --lines 80
 
@@ -145,6 +147,19 @@ The plugin also registers a non-exclusive memory corpus supplement, so shared `m
 `wiki ingest` accepts plain text and markdown files directly. It also supports `.pdf` and `.pptx` by extracting slide/document text into a `source` page, plus best-effort text extraction for legacy `.ppt` files.
 
 `wiki_apply` accepts structured `claims` payloads for synthesis and metadata updates, so the wiki can store claim-level evidence instead of only page-level prose.
+
+## Benchmarking
+
+`memory-wiki` includes a local benchmark harness for the hybrid `RAG + LLM Wiki` stack.
+
+- `openclaw wiki benchmark template` writes a starter JSON suite under the vault
+- `openclaw wiki benchmark run <dataset>` runs four built-in profiles:
+  - `beir`: retrieval quality (`Recall@k`, `MRR`, `NDCG@k`)
+  - `ragas`: grounded answer support (`contextPrecision`, `contextRecall`, `faithfulness`)
+  - `crud-rag`: create/update/delete propagation after wiki mutations
+  - `longmemeval`: long-term memory preference for fresher supported pages
+
+The benchmark runner stays local and deterministic. It evaluates the current vault, or sandboxed copies when a case includes setup/mutation operations.
 
 When `context.includeCompiledDigestPrompt` is enabled, the memory prompt supplement also appends a compact snapshot from `.openclaw-wiki/cache/agent-digest.json`. Legacy prompt assembly sees that automatically, and non-legacy context engines can pick it up when they explicitly consume memory prompt supplements via `buildActiveMemoryPromptSection(...)`.
 

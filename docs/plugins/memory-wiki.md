@@ -222,6 +222,32 @@ Practical rule:
 - use `wiki_search` + `wiki_get` when you care about wiki-specific ranking,
   provenance, or page-level belief structure
 
+## Benchmarking the hybrid stack
+
+`memory-wiki` also ships a local benchmark harness for evaluating the current
+`RAG + LLM Wiki` setup without pulling in separate external runners.
+
+CLI:
+
+```bash
+openclaw wiki benchmark template
+openclaw wiki benchmark run .openclaw-wiki/benchmark-template.json
+openclaw wiki benchmark run ./my-suite.json --profile ragas --backend local --corpus wiki
+```
+
+Built-in profiles:
+
+- `beir`: retrieval quality with `Recall@k`, `MRR`, and `NDCG@k`
+- `ragas`: grounded-answer checks with context precision/recall and faithfulness
+- `crud-rag`: update propagation after ingest/apply/remove operations on a
+  sandboxed vault copy
+- `longmemeval`: long-term memory ordering, preferring fresher supported pages
+
+The benchmark dataset is JSON and can point at the current vault or define
+sandboxed setup/mutation operations per case. When a case declares mutations,
+the runner clones the current vault into a temp directory so the live wiki is
+not modified.
+
 ## Agent tools
 
 The plugin registers these tools:

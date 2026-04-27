@@ -4,6 +4,7 @@ import {
   normalizeMemoryWikiMutationInput,
   type ApplyMemoryWikiMutation,
 } from "./apply.js";
+import { runMemoryWikiBenchmark } from "./benchmark.js";
 import { registerMemoryWikiGatewayMethods } from "./gateway.js";
 import { listMemoryWikiImportInsights } from "./import-insights.js";
 import { listMemoryWikiImportRuns } from "./import-runs.js";
@@ -17,6 +18,11 @@ import { createMemoryWikiTestHarness } from "./test-helpers.js";
 vi.mock("./apply.js", () => ({
   applyMemoryWikiMutation: vi.fn(),
   normalizeMemoryWikiMutationInput: vi.fn(),
+}));
+
+vi.mock("./benchmark.js", () => ({
+  runMemoryWikiBenchmark: vi.fn(),
+  WIKI_BENCHMARK_PROFILES: ["beir", "ragas", "crud-rag", "longmemeval", "all"],
 }));
 
 vi.mock("./compile.js", () => ({
@@ -137,6 +143,17 @@ describe("memory-wiki gateway methods", () => {
     vi.mocked(searchMemoryWiki).mockResolvedValue({
       items: [],
       total: 0,
+    } as never);
+    vi.mocked(runMemoryWikiBenchmark).mockResolvedValue({
+      suiteName: "demo",
+      datasetPath: "/tmp/benchmark.json",
+      evaluatedAt: "2026-04-24T00:00:00.000Z",
+      selectedProfile: "all",
+      totalCases: 1,
+      passedCases: 1,
+      failedCases: 0,
+      wallTimeMs: 12,
+      profiles: {},
     } as never);
   });
 
@@ -384,6 +401,44 @@ describe("memory-wiki gateway methods", () => {
       true,
       expect.objectContaining({
         pagePath: "sources/alpha-notes.md",
+      }),
+    );
+  });
+
+  it("runs wiki benchmarks over the gateway", async () => {
+    const { config } = await createVault({ prefix: "memory-wiki-gateway-" });
+    const { api, registerGatewayMethod } = createPluginApi();
+
+    registerMemoryWikiGatewayMethods({ api, config });
+    const handler = findGatewayHandler(registerGatewayMethod, "wiki.benchmark");
+    if (!handler) {
+      throw new Error("wiki.benchmark handler missing");
+    }
+    const respond = vi.fn();
+
+    await handler({
+      params: {
+        datasetPath: "/tmp/benchmark.json",
+        profile: "ragas",
+        backend: "local",
+        corpus: "wiki",
+      },
+      respond,
+    });
+
+    expect(runMemoryWikiBenchmark).toHaveBeenCalledWith({
+      config,
+      appConfig: undefined,
+      datasetPath: "/tmp/benchmark.json",
+      profile: "ragas",
+      searchBackend: "local",
+      searchCorpus: "wiki",
+    });
+    expect(respond).toHaveBeenCalledWith(
+      true,
+      expect.objectContaining({
+        suiteName: "demo",
+        passedCases: 1,
       }),
     );
   });

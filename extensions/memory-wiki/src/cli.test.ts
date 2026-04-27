@@ -247,4 +247,81 @@ cli note
         .then((entries) => entries.filter((entry) => entry !== "index.md")),
     ).resolves.toEqual([]);
   });
+
+  it("runs benchmark commands from the CLI", async () => {
+    const { rootDir, config } = await createCliVault({ initialize: true });
+    await fs.writeFile(
+      path.join(rootDir, "sources", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "source",
+          id: "source.alpha",
+          title: "Alpha Source",
+        },
+        body: "# Alpha Source\n\nAlpha uses PostgreSQL.\n",
+      }),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(rootDir, "entities", "alpha.md"),
+      renderWikiMarkdown({
+        frontmatter: {
+          pageType: "entity",
+          id: "entity.alpha",
+          title: "Alpha",
+          sourceIds: ["source.alpha"],
+          claims: [
+            {
+              id: "claim.alpha.postgres",
+              text: "Alpha uses PostgreSQL for production writes.",
+              status: "supported",
+              evidence: [{ sourceId: "source.alpha", lines: "1-2" }],
+            },
+          ],
+        },
+        body: "# Alpha\n",
+      }),
+      "utf8",
+    );
+
+    const benchmarkPath = path.join(rootDir, "benchmark.json");
+    await fs.writeFile(
+      benchmarkPath,
+      `${JSON.stringify(
+        {
+          version: 1,
+          name: "cli-bench",
+          defaults: { backend: "local", corpus: "wiki", topK: 5 },
+          beir: [
+            {
+              id: "alpha",
+              query: "postgresql",
+              relevant: ["entities/alpha.md"],
+            },
+          ],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const program = new Command();
+    program.name("test");
+    registerWikiCli(program, config);
+
+    await program.parseAsync(["wiki", "benchmark", "run", benchmarkPath, "--json"], {
+      from: "user",
+    });
+
+    expect(process.stdout.write).toHaveBeenCalledWith(
+      expect.stringContaining('"suiteName": "cli-bench"'),
+    );
+
+    await program.parseAsync(["wiki", "benchmark", "template", "--json"], { from: "user" });
+
+    expect(process.stdout.write).toHaveBeenCalledWith(
+      expect.stringContaining("benchmark-template.json"),
+    );
+  });
 });

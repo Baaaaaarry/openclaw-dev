@@ -1,6 +1,7 @@
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import type { OpenClawConfig, OpenClawPluginApi } from "../api.js";
 import { applyMemoryWikiMutation, normalizeMemoryWikiMutationInput } from "./apply.js";
+import { runMemoryWikiBenchmark, WIKI_BENCHMARK_PROFILES } from "./benchmark.js";
 import { compileMemoryWikiVault } from "./compile.js";
 import {
   WIKI_SEARCH_BACKENDS,
@@ -79,6 +80,14 @@ function readEnumParam<T extends string>(
     return value as T;
   }
   throw new Error(`${key} must be one of: ${allowed.join(", ")}.`);
+}
+
+function readBooleanParam(params: Record<string, unknown>, key: string): boolean | undefined {
+  const value = params[key];
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return undefined;
 }
 
 function respondError(respond: GatewayRespond, error: unknown) {
@@ -196,6 +205,39 @@ export function registerMemoryWikiGatewayMethods(params: {
       }
     },
     { scope: WRITE_SCOPE },
+  );
+
+  api.registerGatewayMethod(
+    "wiki.benchmark",
+    async ({ params: requestParams, respond }) => {
+      try {
+        await syncImportedSourcesIfNeeded(config, appConfig);
+        const datasetPath = readStringParam(requestParams, "datasetPath", { required: true });
+        const profile = readEnumParam(requestParams, "profile", WIKI_BENCHMARK_PROFILES);
+        const searchBackend = readEnumParam(requestParams, "backend", WIKI_SEARCH_BACKENDS);
+        const searchCorpus = readEnumParam(requestParams, "corpus", WIKI_SEARCH_CORPORA);
+        const failOnFailedCases = readBooleanParam(requestParams, "failOnFailedCases") ?? false;
+        const result = await runMemoryWikiBenchmark({
+          config,
+          appConfig,
+          datasetPath,
+          profile,
+          searchBackend,
+          searchCorpus,
+        });
+        if (failOnFailedCases && result.failedCases > 0) {
+          respond(false, result, {
+            code: "benchmark_failed",
+            message: `${result.failedCases} benchmark case(s) failed.`,
+          });
+          return;
+        }
+        respond(true, result);
+      } catch (error) {
+        respondError(respond, error);
+      }
+    },
+    { scope: READ_SCOPE },
   );
 
   api.registerGatewayMethod(
