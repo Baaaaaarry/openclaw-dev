@@ -248,6 +248,30 @@ sandboxed setup/mutation operations per case. When a case declares mutations,
 the runner clones the current vault into a temp directory so the live wiki is
 not modified.
 
+## Auto-import watch
+
+For local document pipelines, `memory-wiki` can also watch an inbox directory
+and ingest new source files automatically:
+
+```bash
+openclaw wiki watch-import ./incoming-docs
+openclaw wiki watch-import ./incoming-docs --once
+```
+
+Supported extensions:
+
+- `.doc`
+- `.docx`
+- `.md`
+- `.pdf`
+- `.ppt`
+- `.pptx`
+
+The watcher ignores managed wiki directories such as `sources/`, `entities/`,
+`syntheses/`, `reports/`, and `.openclaw-wiki/` so generated pages do not get
+re-ingested. Use `--once` for a one-shot backlog scan, or run the command as a
+long-lived service to ingest files continuously.
+
 ## Agent tools
 
 The plugin registers these tools:

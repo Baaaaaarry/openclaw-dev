@@ -324,4 +324,28 @@ cli note
       expect.stringContaining("benchmark-template.json"),
     );
   });
+
+  it("runs watch-import once from the CLI", async () => {
+    const { rootDir, config } = await createCliVault({ initialize: true });
+    const watchDir = path.join(rootDir, "incoming");
+    await fs.mkdir(watchDir, { recursive: true });
+    await fs.writeFile(
+      path.join(watchDir, "policy.md"),
+      "# Policy\n\nFlight invoice required.\n",
+      "utf8",
+    );
+
+    const program = new Command();
+    program.name("test");
+    registerWikiCli(program, config);
+
+    await program.parseAsync(["wiki", "watch-import", watchDir, "--once", "--json"], {
+      from: "user",
+    });
+
+    expect(process.stdout.write).toHaveBeenCalledWith(expect.stringContaining('"imported": 1'));
+    await expect(
+      fs.readFile(path.join(rootDir, "sources", "policy.md"), "utf8"),
+    ).resolves.toContain("Flight invoice required.");
+  });
 });

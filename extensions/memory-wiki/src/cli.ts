@@ -42,6 +42,7 @@ import {
   resolveMemoryWikiStatus,
 } from "./status.js";
 import { initializeMemoryWikiVault } from "./vault.js";
+import { renderMemoryWikiWatchImportSummary, runMemoryWikiWatchImport } from "./watch-import.js";
 
 type WikiStatusCommandOptions = {
   json?: boolean;
@@ -66,6 +67,13 @@ type WikiLintCommandOptions = {
 type WikiIngestCommandOptions = {
   json?: boolean;
   title?: string;
+};
+
+type WikiWatchImportCommandOptions = {
+  json?: boolean;
+  once?: boolean;
+  settleMs?: number;
+  stateFile?: string;
 };
 
 type WikiBenchmarkRunCommandOptions = {
@@ -374,6 +382,36 @@ export async function runWikiIngest(params: {
     render: (value) =>
       `Ingested ${value.sourcePath} into ${value.pagePath}. Refreshed ${value.indexUpdatedFiles.length} index file${value.indexUpdatedFiles.length === 1 ? "" : "s"}.`,
   });
+}
+
+export async function runWikiWatchImport(params: {
+  config: ResolvedMemoryWikiConfig;
+  watchPath?: string;
+  statePath?: string;
+  once?: boolean;
+  settleMs?: number;
+  json?: boolean;
+  stdout?: Pick<NodeJS.WriteStream, "write">;
+}) {
+  const result = await runMemoryWikiWatchImport({
+    config: params.config,
+    watchPath: params.watchPath,
+    statePath: params.statePath,
+    once: params.once,
+    settleMs: params.settleMs,
+  });
+  if (params.once) {
+    writeOutput(
+      params.json ? JSON.stringify(result, null, 2) : renderMemoryWikiWatchImportSummary(result),
+      params.stdout,
+    );
+  } else if (!params.json) {
+    writeOutput(
+      `Watching ${result.watchPath} for new wiki source files (.doc, .docx, .md, .pdf, .ppt, .pptx).`,
+      params.stdout,
+    );
+  }
+  return result;
 }
 
 export async function runWikiBenchmark(params: {
@@ -782,6 +820,29 @@ export function registerWikiCli(
     .option("--json", "Print JSON")
     .action(async (inputPath: string, opts: WikiIngestCommandOptions) => {
       await runWikiIngest({ config, inputPath, title: opts.title, json: opts.json });
+    });
+
+  wiki
+    .command("watch-import")
+    .description(
+      "Watch a directory for new .doc/.docx/.md/.pdf/.ppt/.pptx files and ingest them into the wiki",
+    )
+    .argument("[path]", "Directory to watch", config.vault.path)
+    .option("--once", "Scan current files once, then exit", false)
+    .option("--settle-ms <n>", "Wait for file writes to settle before ingest", (value: string) =>
+      Number(value),
+    )
+    .option("--state-file <path>", "Override the persisted watch state file")
+    .option("--json", "Print JSON for --once runs")
+    .action(async (watchPath: string, opts: WikiWatchImportCommandOptions) => {
+      await runWikiWatchImport({
+        config,
+        watchPath,
+        statePath: opts.stateFile,
+        once: opts.once,
+        settleMs: opts.settleMs,
+        json: opts.json,
+      });
     });
 
   const benchmark = wiki

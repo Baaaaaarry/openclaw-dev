@@ -37,8 +37,8 @@ let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 
 export type ExtractedWikiSourceContent = {
   text: string;
-  format: "text" | "pdf" | "pptx" | "ppt";
-  extractedBy: "utf8" | "pdfjs" | "pptx-xml" | "ppt-strings";
+  format: "text" | "pdf" | "pptx" | "ppt" | "docx" | "doc";
+  extractedBy: "utf8" | "pdfjs" | "pptx-xml" | "ppt-strings" | "docx-xml" | "doc-strings";
 };
 
 function normalizeExtractedText(input: string): string {
@@ -185,6 +185,25 @@ async function extractPptxText(buffer: Buffer): Promise<string> {
   return normalizeExtractedText(parts.join("\n\n"));
 }
 
+async function extractDocxText(buffer: Buffer): Promise<string> {
+  const zip = await JSZip.loadAsync(buffer);
+  const documentXml = await zip.file("word/document.xml")?.async("string");
+  if (!documentXml) {
+    return "";
+  }
+  const paragraphs = documentXml
+    .split(/<\/w:p>/i)
+    .map((paragraphXml) =>
+      Array.from(paragraphXml.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/gi), (match) =>
+        decodeXmlEntities(match[1] ?? "").trim(),
+      )
+        .filter(Boolean)
+        .join(""),
+    )
+    .filter(Boolean);
+  return normalizeExtractedText(paragraphs.join("\n\n"));
+}
+
 function assertUtf8Text(buffer: Buffer, sourcePath: string): string {
   const preview = buffer.subarray(0, Math.min(buffer.length, 4096));
   if (preview.includes(0)) {
@@ -220,6 +239,22 @@ export async function extractWikiSourceContent(params: {
       );
     }
     return { text, format: "ppt", extractedBy: "ppt-strings" };
+  }
+  if (normalizedPath.endsWith(".docx")) {
+    const text = await extractDocxText(params.buffer);
+    if (!text) {
+      throw new Error(`No extractable text found in DOCX: ${params.sourcePath}`);
+    }
+    return { text, format: "docx", extractedBy: "docx-xml" };
+  }
+  if (normalizedPath.endsWith(".doc")) {
+    const text = extractLegacyPptText(params.buffer);
+    if (!text) {
+      throw new Error(
+        `No extractable text found in legacy DOC: ${params.sourcePath}. Convert to .docx for richer import.`,
+      );
+    }
+    return { text, format: "doc", extractedBy: "doc-strings" };
   }
   return {
     text: assertUtf8Text(params.buffer, params.sourcePath),

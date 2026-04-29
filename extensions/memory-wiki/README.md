@@ -106,8 +106,11 @@ openclaw wiki status
 openclaw wiki doctor
 openclaw wiki init
 openclaw wiki ingest ./notes/alpha.md
+openclaw wiki ingest ./docs/travel-policy.docx
 openclaw wiki ingest ./docs/quarterly-report.pdf
 openclaw wiki ingest ./slides/roadmap.pptx
+openclaw wiki watch-import ./incoming-docs
+openclaw wiki watch-import ./incoming-docs --once
 openclaw wiki compile
 openclaw wiki lint
 openclaw wiki benchmark template
@@ -144,7 +147,9 @@ openclaw wiki obsidian daily
 
 The plugin also registers a non-exclusive memory corpus supplement, so shared `memory_search` / `memory_get` flows can reach the wiki when the active memory plugin supports corpus selection.
 
-`wiki ingest` accepts plain text and markdown files directly. It also supports `.pdf` and `.pptx` by extracting slide/document text into a `source` page, plus best-effort text extraction for legacy `.ppt` files.
+`wiki ingest` accepts plain text and markdown files directly. It also supports `.docx`, `.pdf`, and `.pptx` by extracting document/slide text into a `source` page, plus best-effort text extraction for legacy `.doc` and `.ppt` files.
+
+`wiki watch-import <dir>` keeps watching a directory for new `.doc`, `.docx`, `.md`, `.pdf`, `.ppt`, and `.pptx` files and ingests them into the wiki. It ignores managed wiki directories such as `sources/`, `entities/`, and `.openclaw-wiki/` to avoid re-ingesting generated pages.
 
 `wiki_apply` accepts structured `claims` payloads for synthesis and metadata updates, so the wiki can store claim-level evidence instead of only page-level prose.
 
