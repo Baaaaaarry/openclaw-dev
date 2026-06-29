@@ -1,0 +1,20 @@
+{
+  "name": "@openclaw/perf-tools",
+  "version": "0.0.0-private",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./runtime/latency-trace": "./src/runtime/latency-trace.ts",
+    "./runtime/diagnostic-events": "./src/runtime/diagnostic-events.ts",
+    "./runtime/latency-trace-persist": "./src/runtime/latency-trace-persist.ts",
+    "./runtime/hardware-trace": "./src/runtime/hardware-trace.ts",
+    "./report": "./src/report/index.ts",
+    "./report/latency-trace-report": "./src/report/latency-trace-report.ts",
+    "./report/latency-trace-visualize": "./src/report/latency-trace-visualize.ts",
+    "./cli/report": "./src/cli/latency-report.ts",
+    "./cli/visualize": "./src/cli/latency-visualize.ts",
+    "./openclaw-defaults": "./src/openclaw-defaults.ts"
+  }
+}
